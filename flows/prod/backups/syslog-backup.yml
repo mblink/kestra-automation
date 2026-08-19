@@ -1,0 +1,90 @@
+id: syslog-backup
+namespace: prod.backups
+
+description: |
+  Backup all /var/log/sudoers*.gz to S3. Migrated from Rundeck job
+  Prod/Backups/Syslog Backup (cba07245) — targets tags:prod, which at export
+  time resolved to ALL 9 nodes in the fetched s3://bondlink-rundeck/prod.xml
+  inventory (every prod node carries that tag).
+
+  Target hosts are now discovered dynamically via AWS instance tags
+  (Environment=prod, running) instead of the frozen 9-host list from that
+  export — this naturally tracks the live prod fleet (currently 16 running
+  instances, including several added since the export: proddb01/02/05,
+  prodredis-sa-arm, prodops, ai-builds, develop-arm) and drops hosts that no
+  longer exist (the old list's prodweb01/02 and prodlb01 are gone). The
+  backup script itself is a no-op on any host with no matching syslogs, so
+  over-including a host here is harmless — same rationale as bondlink-logs.yml,
+  which uses this identical discovery pattern (see that flow for the
+  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes, already
+  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
+
+  Source job's dispatch.keepgoing=true (continue to other hosts even if one fails) —
+  Kestra's ForEach doesn't stop other iterations when one fails unless told to, so
+  no per-host error handling is needed to preserve that behavior. concurrencyLimit
+  is capped at 3 (not unlimited) to throttle how many hosts run this in parallel.
+
+  logs/syslogs.sh is inlined below (quoted heredoc) rather than pulled from
+  Namespace Files — same convention as the rest of this repo. Source of truth
+  remains rundeck-jobs' logs/syslogs.sh.
+
+tasks:
+  - id: discover_prod_hosts
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - instances.json
+    commands:
+      - |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          --output json > instances.json
+
+  - id: backup_per_host
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ fromJson(read(outputs.discover_prod_hosts.outputFiles['instances.json'])) }}"
+    concurrencyLimit: 3
+    tasks:
+      - id: backup
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ taskrun.value }}.bondlink.vpc"
+        port: "2007"
+        username: bldeploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+        strictHostKeyChecking: "no"
+        commands:
+          - |
+            set -e
+            cat > /tmp/syslogs.sh <<'SYSLOG_SCRIPT'
+            #!/usr/bin/env bash
+
+            FOLDER=$(date +'%Y-%m' -d "yesterday")
+            FILE_MATCH=$(date +'%Y%m%d' -d "yesterday")
+
+            cd /var/log/
+            for f in $(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::'); do
+              sudo /usr/local/bin/aws s3 cp ${f} s3://bondlink-data-east/syslogs/${HOSTNAME}/${FOLDER}/${f} --only-show-errors
+            done
+            SYSLOG_SCRIPT
+            chmod +x /tmp/syslogs.sh
+            sudo /tmp/syslogs.sh
+            rm -f /tmp/syslogs.sh
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 12 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Syslog Backup failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
