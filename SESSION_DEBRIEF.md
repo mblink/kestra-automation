@@ -34,14 +34,20 @@ feature — that mechanism was originally tried and dropped for simplicity, part
 because the Kestra CLI had no way to sync Namespace Files (only flows). That CLI gap
 is gone (`kestra namespace files update <namespace> <dir>` now exists, mirroring
 `flow namespace update`), so Namespace Files are now used for scripts that are
-genuinely shared **across environments** — starting with `logs/syslogs.sh`, which
-lives at `namespace-files/shared/syslogs.sh` and is pulled into both
-`staging/backups/syslog-backup.yml` and `prod/backups/syslog-backup.yml` via
-`{{ read('syslogs.sh', namespace='shared') }}` inside their heredocs, rather than
-being duplicated. Everything else stays inlined per-flow for now; apply this same
+genuinely shared **across environments** — two scripts so far, both under
+`namespace-files/shared/`: `syslogs.sh` (pulled into `staging/backups/
+syslog-backup.yml` and `prod/backups/syslog-backup.yml`) and `bondlink_logs.py`
+(pulled into `staging/backups/bondlink-logs.yml` and `prod/backups/
+bondlink-logs.yml` — its own `ENV = "prod" if "prod" in HOSTNAME else "staging"`
+logic is what made it identical between environments in the first place). Both via
+`{{ read('<file>', namespace='shared') }}` inside their heredocs, rather than being
+duplicated. Everything else stays inlined per-flow for now; apply this same
 `namespace-files/shared/` pattern to other scripts as they're found to be shared
-across more than one flow. Each flow's description names the `rundeck-jobs`
-source-of-truth path for anything it inlines or reads from Namespace Files.
+across more than one flow (`delete_versions.sh` and `cert_expiration.py` are each
+only used in one flow in this repo so far — not candidates yet, but worth
+revisiting if a second flow reuses either). Each flow's description names the
+`rundeck-jobs` source-of-truth path for anything it inlines or reads from
+Namespace Files.
 
 Production sync (see "How flows actually get onto the production Kestra instance"
 below) now runs a `namespace files update` call per `namespace-files/<namespace>/`
