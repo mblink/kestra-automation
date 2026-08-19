@@ -49,7 +49,7 @@ tasks:
     tasks:
       - id: backup
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value.PrivateDnsName }}"
+        host: "{{ fromJson(taskrun.value).PrivateDnsName }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY

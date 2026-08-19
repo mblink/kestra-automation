@@ -42,7 +42,7 @@ tasks:
     tasks:
       - id: backup
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value.PrivateDnsName }}"
+        host: "{{ fromJson(taskrun.value).PrivateDnsName }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
@@ -51,7 +51,7 @@ tasks:
         commands:
           - |
             set -e
-            echo "Backing up syslogs for {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
+            echo "Backing up syslogs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
             cat > /tmp/syslogs.sh <<'SYSLOG_SCRIPT'
             {{ read('syslogs.sh', namespace='shared') }}
             SYSLOG_SCRIPT

@@ -36,7 +36,7 @@ tasks:
     tasks:
       - id: sync
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value.PrivateDnsName }}"
+        host: "{{ fromJson(taskrun.value).PrivateDnsName }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
@@ -45,7 +45,7 @@ tasks:
         commands:
           - |
             set -e
-            echo "Syncing suricata logs for {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
+            echo "Syncing suricata logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
             /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
 
 triggers:

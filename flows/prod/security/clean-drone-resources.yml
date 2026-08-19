@@ -42,7 +42,7 @@ tasks:
     tasks:
       - id: clean
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value.PrivateDnsName }}"
+        host: "{{ fromJson(taskrun.value).PrivateDnsName }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
@@ -51,7 +51,7 @@ tasks:
         commands:
           - |
             set -e
-            echo "Cleaning docker resources on {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
+            echo "Cleaning docker resources on {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
             sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
             cleanImg() {
               for img in $(

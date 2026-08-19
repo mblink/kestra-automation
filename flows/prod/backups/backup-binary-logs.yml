@@ -52,7 +52,7 @@ tasks:
     tasks:
       - id: backup
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value.PrivateDnsName }}"
+        host: "{{ fromJson(taskrun.value).PrivateDnsName }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
@@ -61,7 +61,7 @@ tasks:
         commands:
           - |
             set -e
-            echo "Backing up binary logs for {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
+            echo "Backing up binary logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
             cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
             #!/usr/bin/env bash
             CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
