@@ -14,6 +14,11 @@ description: |
   from Namespace Files — same convention as the rest of this repo. Source of truth
   remains rundeck-jobs' haproxy/cert_expiration.py.
 
+  Runs via /opt/saltstack/salt/bin/python3 (the salt onedir's bundled Python 3.14),
+  not the system python3 (3.12 on these hosts) — these hosts' salt onedir install
+  is the interpreter every script here should target. The original bare `python`
+  invocation would have failed outright on a modern Ubuntu host with no python2.
+
 tasks:
   - id: check_expiration
     type: io.kestra.plugin.fs.ssh.Command
@@ -27,7 +32,7 @@ tasks:
       - |
         set -e
         cat > /tmp/cert_expiration.py <<'CERT_SCRIPT'
-        #!/usr/bin/env python3
+        #!/usr/bin/env /opt/saltstack/salt/bin/python3
 
         import operator
         import os
@@ -104,7 +109,7 @@ tasks:
         if __name__ == '__main__':
           main()
         CERT_SCRIPT
-        python /tmp/cert_expiration.py
+        /opt/saltstack/salt/bin/python3 /tmp/cert_expiration.py
         rm -f /tmp/cert_expiration.py
 
   - id: notify_success

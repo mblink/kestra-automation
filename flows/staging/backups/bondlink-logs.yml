@@ -23,8 +23,12 @@ description: |
   bondlink-logs.yml the same way staging/prod syslog-backup.yml share syslogs.sh.
   Source of truth remains rundeck-jobs' logs/bondlink_logs.py; if that changes,
   update namespace-files/shared/bondlink_logs.py here and both flows pick it up
-  automatically. Note it imports `more_itertools` and `boto3` — confirm those are
-  available in the target host's python3 environment.
+  automatically. Runs via /opt/saltstack/salt/bin/python3 (the salt onedir's bundled
+  Python 3.14), not the system python3 (3.12 on these hosts) — the salt
+  onedir env is where `more_itertools`/`boto3`/`botocore` are actually
+  installed; the system python3 lacks them. Never invoke this as a bare
+  `python3 script.py` (PATH resolves to the system interpreter, silently
+  ignoring the script's own shebang).
 
   PREREQUISITE (confirmed satisfied on prodsalt-arm, the host Kestra itself runs
   on): discover_bondlink_hosts relies on prodsalt-arm's EC2 instance role for AWS
@@ -68,7 +72,7 @@ tasks:
             cat > /tmp/bondlink_logs.py <<'BONDLINK_LOGS_SCRIPT'
             {{ read('bondlink_logs.py', namespace='shared') }}
             BONDLINK_LOGS_SCRIPT
-            python3 /tmp/bondlink_logs.py
+            /opt/saltstack/salt/bin/python3 /tmp/bondlink_logs.py
             rm -f /tmp/bondlink_logs.py
 
 triggers:
