@@ -24,9 +24,13 @@ description: |
   no per-host error handling is needed to preserve that behavior. concurrencyLimit
   is capped at 3 (not unlimited) to throttle how many hosts run this in parallel.
 
-  logs/syslogs.sh is inlined below (quoted heredoc) rather than pulled from
-  Namespace Files — same convention as the rest of this repo. Source of truth
-  remains rundeck-jobs' logs/syslogs.sh.
+  logs/syslogs.sh is now a Namespace File (namespace-files/shared/syslogs.sh in this
+  repo, synced to Kestra's `shared` namespace), pulled in via
+  {{ read('syslogs.sh', namespace='shared') }} instead of being duplicated inline —
+  this is the first flow using this pattern, shared with prod.backups'
+  syslog-backup.yml so the exact same script backs up both environments. Source of
+  truth remains rundeck-jobs' logs/syslogs.sh; if that changes, update
+  namespace-files/shared/syslogs.sh here and both flows pick it up automatically.
 
 tasks:
   - id: discover_staging_hosts
@@ -58,15 +62,7 @@ tasks:
             set -e
             echo "Backing up syslogs for {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
             cat > /tmp/syslogs.sh <<'SYSLOG_SCRIPT'
-            #!/usr/bin/env bash
-
-            FOLDER=$(date +'%Y-%m' -d "yesterday")
-            FILE_MATCH=$(date +'%Y%m%d' -d "yesterday")
-
-            cd /var/log/
-            for f in $(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::'); do
-              sudo /usr/local/bin/aws s3 cp ${f} s3://bondlink-data-east/syslogs/${HOSTNAME}/${FOLDER}/${f} --only-show-errors
-            done
+            {{ read('syslogs.sh', namespace='shared') }}
             SYSLOG_SCRIPT
             chmod +x /tmp/syslogs.sh
             sudo /tmp/syslogs.sh

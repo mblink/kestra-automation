@@ -10,8 +10,13 @@ description: |
   --user=USER:PASS` (OSS CLI auth is basic-auth, no --api-token — that's
   Enterprise-only).
 
-  Namespace Files are not used at all — shared scripts are inlined directly into
-  each flow's commands (quoted heredocs), so there's nothing else to sync here.
+  Most shared scripts are still inlined directly into each flow's commands
+  (quoted heredocs). The exception: scripts genuinely shared across environments
+  (starting with logs/syslogs.sh) live as real Namespace Files under
+  namespace-files/shared/ in this repo, synced to Kestra's `shared` namespace and
+  pulled into flows via {{ read('syslogs.sh', namespace='shared') }}. This task
+  syncs that directory too so local dev matches what production's sync mechanism
+  is expected to do (see salt/kestra's sync-flows.sh for the production side).
 
   Run manually (no trigger yet) until validated — dryRun: true; flip to false once
   you've reviewed a dry-run diff in the execution output.
@@ -28,5 +33,15 @@ tasks:
     gitDirectory: flows/prod
     targetNamespace: prod
     includeChildNamespaces: true
+    delete: true
+    dryRun: true
+
+  - id: sync_shared_namespace_files
+    type: io.kestra.plugin.git.SyncNamespaceFiles
+    url: git@github.com:mblink/kestra-automation.git
+    branch: main
+    privateKey: "{{ secret('GITHUB_SSH_PRIVATE_KEY') }}"
+    namespace: shared
+    gitDirectory: namespace-files/shared
     delete: true
     dryRun: true

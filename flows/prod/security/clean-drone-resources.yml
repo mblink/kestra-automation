@@ -17,21 +17,27 @@ description: |
   repo's general parallel-vs-node-first convention since there's no real
   cross-host dependency in a cleanup job like this.
 
+  Target hosts are now discovered dynamically via AWS instance tags
+  (Environment=prod, NodeType=drone-agent, running) instead of the hardcoded
+  proddroneagent04/05/06 list above — see bondlink-logs.yml for the
+  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
+  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
+
 tasks:
-  - id: discover_staging_hosts
+  - id: discover_drone_hosts
     type: io.kestra.plugin.aws.cli.AwsCLI
     outputFiles:
       - instances.json
     commands:
       - |
         aws ec2 describe-instances \
-          --filters "Name=tag:NodeType,Values=drone-agent" "Name=instance-state-name,Values=running" \
+          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=drone-agent" "Name=instance-state-name,Values=running" \
           --query "Reservations[].Instances[].{Name: Tags[?Key=='Name']|[0].Value, PrivateDnsName: NetworkInterfaces[0].PrivateDnsName}" \
           --output json > instances.json
 
   - id: clean_servers
     type: io.kestra.plugin.core.flow.ForEach
-    values: "{{ fromJson(read(outputs.discover_staging_hosts.outputFiles['instances.json'])) }}"
+    values: "{{ fromJson(read(outputs.discover_drone_hosts.outputFiles['instances.json'])) }}"
     concurrencyLimit: 0
     tasks:
       - id: clean
@@ -45,6 +51,7 @@ tasks:
         commands:
           - |
             set -e
+            echo "Cleaning docker resources on {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
             sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
             cleanImg() {
               for img in $(
@@ -64,14 +71,14 @@ tasks:
             sudo docker network prune --force
             sudo docker volume prune --all --force
 
-      - id: notify_success
-        type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
-        sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
-        from: kestra@bondlink.com
-        to:
-          - jeff@bondlink.com
-        subject: "Rundeck[staging_cron] Clean Drone Resources Success"
-        htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Clean Drone Resources Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
 
 errors:
   - id: notify_failure
@@ -80,7 +87,7 @@ errors:
     from: kestra@bondlink.com
     to:
       - jeff@bondlink.com
-    subject: "Rundeck[staging_cron] Clean Drone Resources Failed"
+    subject: "Rundeck[prod_cron] Clean Drone Resources Failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}

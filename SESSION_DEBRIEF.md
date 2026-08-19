@@ -28,11 +28,27 @@ same SSH key Rundeck itself already uses), and
 just an API key).
 
 Shared scripts that used to live in `rundeck-jobs`' `aws/`, `databases/`, `haproxy/`,
-`logs/` folders are **inlined directly into each flow's `commands:`** via quoted
-heredocs (`<<'DELIM'`), not pulled from Kestra's Namespace Files feature — that
-mechanism was tried and deliberately dropped for simplicity. Trade-off: if a shared
-script changes, every flow inlining it needs a manual matching update. Each flow's
-description names the `rundeck-jobs` source-of-truth path for anything it inlines.
+`logs/` folders are mostly still **inlined directly into each flow's `commands:`**
+via quoted heredocs (`<<'DELIM'`), rather than pulled from Kestra's Namespace Files
+feature — that mechanism was originally tried and dropped for simplicity, partly
+because the Kestra CLI had no way to sync Namespace Files (only flows). That CLI gap
+is gone (`kestra namespace files update <namespace> <dir>` now exists, mirroring
+`flow namespace update`), so Namespace Files are now used for scripts that are
+genuinely shared **across environments** — starting with `logs/syslogs.sh`, which
+lives at `namespace-files/shared/syslogs.sh` and is pulled into both
+`staging/backups/syslog-backup.yml` and `prod/backups/syslog-backup.yml` via
+`{{ read('syslogs.sh', namespace='shared') }}` inside their heredocs, rather than
+being duplicated. Everything else stays inlined per-flow for now; apply this same
+`namespace-files/shared/` pattern to other scripts as they're found to be shared
+across more than one flow. Each flow's description names the `rundeck-jobs`
+source-of-truth path for anything it inlines or reads from Namespace Files.
+
+Production sync (see "How flows actually get onto the production Kestra instance"
+below) now runs a `namespace files update` call per `namespace-files/<namespace>/`
+directory alongside its existing per-namespace `flow namespace update` loop — see
+the salt repo's `salt/kestra/bin/sync-flows.sh.jinja2`. Local dev's
+`ops/kestra-bootstrap.yml` mirrors this with a `io.kestra.plugin.git.
+SyncNamespaceFiles` task alongside its existing `SyncFlows` task.
 
 ## Secrets this repo's flows expect
 

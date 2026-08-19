@@ -4,14 +4,20 @@ namespace: prod.backups
 description: |
   Back up binary logs of cluster nodes. Migrated from Rundeck job
   Prod/Backups/Backup Binary Logs (27e0de96) — original Rundeck strategy was
-  `parallel` across proddb01,proddb03 with threadcount 3; translated here to two
-  independent SSH tasks with no dependsOn (Kestra runs unconnected tasks concurrently).
+  `parallel` across proddb01,proddb03 with threadcount 3, which at export time
+  was a hardcoded 2-host list (proddb03 didn't even appear in the fetched
+  s3://bondlink-rundeck/prod.xml inventory, only proddb01/proddb02 — likely
+  renamed/decommissioned at export time and back since).
+
+  Target hosts are now discovered dynamically via AWS instance tags
+  (Environment=prod, NodeType=cluster-node, running) instead of that hardcoded
+  list — this resolves the GAP above by construction (whatever's tagged as a
+  cluster node gets backed up) and confirmed live today covers all 3 current
+  nodes: proddb01, proddb02, proddb03. See bondlink-logs.yml for the
+  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
+  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
 
   Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck.
-
-  GAP: proddb03 does not appear in the fetched s3://bondlink-rundeck/prod.xml node
-  inventory at all (only proddb01/proddb02 exist there) — it may be renamed/decommissioned.
-  Confirm the real second target host against live Rundeck before trusting this flow.
 
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
@@ -28,45 +34,42 @@ description: |
   Namespace Files. Source of truth remains rundeck-jobs' databases/binlog_backups.sh.
 
 tasks:
-  - id: backup_proddb01
-    type: io.kestra.plugin.fs.ssh.Command
-    host: proddb01.bondlink.vpc
-    port: "2007"
-    username: bldeploy
-    authMethod: PUBLIC_KEY
-    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
-    strictHostKeyChecking: "no"
+  - id: discover_db_hosts
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - instances.json
     commands:
       - |
-        set -e
-        cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
-        #!/usr/bin/env bash
-        CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
-        sudo /usr/local/bin/aws s3 sync /var/log/mysql/ s3://bondlink-data-east/backups/mysql/binlogs/$HOSTNAME/ --exclude="*" --include="*bin*" --exclude="*index*" --exclude="${CURRENT}" --only-show-errors
-        BINLOG_SCRIPT
-        chmod +x /tmp/binlog_backups.sh
-        sudo /tmp/binlog_backups.sh
-        rm -f /tmp/binlog_backups.sh
+        aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=cluster-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].{Name: Tags[?Key=='Name']|[0].Value, PrivateDnsName: NetworkInterfaces[0].PrivateDnsName}" \
+          --output json > instances.json
 
-  - id: backup_proddb03
-    type: io.kestra.plugin.fs.ssh.Command
-    host: proddb03.bondlink.vpc
-    port: "2007"
-    username: bldeploy
-    authMethod: PUBLIC_KEY
-    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
-    strictHostKeyChecking: "no"
-    commands:
-      - |
-        set -e
-        cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
-        #!/usr/bin/env bash
-        CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
-        sudo /usr/local/bin/aws s3 sync /var/log/mysql/ s3://bondlink-data-east/backups/mysql/binlogs/$HOSTNAME/ --exclude="*" --include="*bin*" --exclude="*index*" --exclude="${CURRENT}" --only-show-errors
-        BINLOG_SCRIPT
-        chmod +x /tmp/binlog_backups.sh
-        sudo /tmp/binlog_backups.sh
-        rm -f /tmp/binlog_backups.sh
+  - id: backup_per_host
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ fromJson(read(outputs.discover_db_hosts.outputFiles['instances.json'])) }}"
+    concurrencyLimit: 3
+    tasks:
+      - id: backup
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ taskrun.value.PrivateDnsName }}"
+        port: "2007"
+        username: bldeploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+        strictHostKeyChecking: "no"
+        commands:
+          - |
+            set -e
+            echo "Backing up binary logs for {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
+            cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
+            #!/usr/bin/env bash
+            CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
+            sudo /usr/local/bin/aws s3 sync /var/log/mysql/ s3://bondlink-data-east/backups/mysql/binlogs/$HOSTNAME/ --exclude="*" --include="*bin*" --exclude="*index*" --exclude="${CURRENT}" --only-show-errors
+            BINLOG_SCRIPT
+            chmod +x /tmp/binlog_backups.sh
+            sudo /tmp/binlog_backups.sh
+            rm -f /tmp/binlog_backups.sh
 
 triggers:
   - id: schedule

@@ -3,15 +3,22 @@ namespace: staging.backups
 
 description: |
   Backup all suricata logs to S3. Migrated from Rundeck job Staging/Backups/Suricata
-  (6139b5af) — targets NodeType=bastion,proxy, which resolves to stagingjump01, staginglb01,
-  staginglb02
+  (6139b5af) — originally targeted tags:bastion,proxy which at export time mapped to
+  stagingjump01, staginglb01, staginglb02.
+
+  Target hosts are now discovered dynamically via AWS instance tags
+  (Environment=staging, NodeType=bastion or proxy, running) instead of that frozen
+  list — live today this resolves to stagingjump, staginglb02, staginglb04 (staginglb01
+  no longer exists; staginglb04 is new since the export). See bondlink-logs.yml for
+  the discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
+  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
 
   Uses io.kestra.plugin.core.flow.ForEach (values/tasks/concurrencyLimit, iteration
   var {{ taskrun.value }} — confirmed via bytecode + docs) instead of one hand-written
   task per host, since Rundeck's `parallel` strategy here maps directly onto it.
 
 tasks:
-  - id: discover_bondlink_hosts
+  - id: discover_suricata_hosts
     type: io.kestra.plugin.aws.cli.AwsCLI
     outputFiles:
       - instances.json
@@ -24,7 +31,7 @@ tasks:
 
   - id: sync_per_host
     type: io.kestra.plugin.core.flow.ForEach
-    values: "{{ fromJson(read(outputs.discover_bondlink_hosts.outputFiles['instances.json'])) }}"
+    values: "{{ fromJson(read(outputs.discover_suricata_hosts.outputFiles['instances.json'])) }}"
     concurrencyLimit: 0
     tasks:
       - id: sync
@@ -36,7 +43,10 @@ tasks:
         privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
         strictHostKeyChecking: "no"
         commands:
-          - /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
+          - |
+            set -e
+            echo "Syncing suricata logs for {{ taskrun.value.Name }} ({{ taskrun.value.PrivateDnsName }})"
+            /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
 
 triggers:
   - id: schedule
