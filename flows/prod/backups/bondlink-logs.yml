@@ -69,7 +69,7 @@ tasks:
             from dataclasses import dataclass
 
             ROOT_DIR = '/var/log/bondlink'
-            BUCKET = 'bondlink-data'
+            BUCKET = 'bondlink-data-east'
             HOSTNAME = socket.gethostname()
             ENV = "prod" if "prod" in HOSTNAME else "staging"
             DEBUG = False

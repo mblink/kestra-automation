@@ -204,9 +204,9 @@ tasks:
 
         ' | sudo tee BondLink_restore.sh > /dev/null
 
-        BUCKET="bondlink-data"
-        REGION="us-west-2"
-        PREFIX="backups/mysql/us-east-2/devbackups"
+        BUCKET="bondlink-data-east"
+        REGION="us-east-1"
+        PREFIX="backups/mysql/us-east-1/devbackups"
         tar cf bondlink_dev_backup_${F_DATE}.tar BondLink_schema.sql BondLink_data.sql BondLink_triggers.sql BondLink_restore.sh
         /usr/bin/zstd -14 --no-progress -T${CORES} bondlink_dev_backup_${F_DATE}.tar
         sudo /usr/local/bin/aws s3 cp bondlink_dev_backup_${F_DATE}.tar.zst s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst --only-show-errors
@@ -283,7 +283,7 @@ tasks:
         fi
         PRUNE_SCRIPT
         chmod +x /tmp/delete_versions.sh
-        bash +x /tmp/delete_versions.sh -r us-east-1 -b bondlink-data -p "backups/mysql/us-east-2/devbackups" -d 10 -f
+        bash +x /tmp/delete_versions.sh -r us-east-1 -b bondlink-data-east -p "backups/mysql/us-east-2/devbackups" -d 10 -f
 
         rm -f /tmp/dev_bondlink_backup.sh /tmp/delete_versions.sh
 
