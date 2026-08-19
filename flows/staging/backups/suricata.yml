@@ -3,38 +3,55 @@ namespace: staging.backups
 
 description: |
   Backup all suricata logs to S3. Migrated from Rundeck job Staging/Backups/Suricata
-  (6139b5af) — targets tags:suricata, which resolves to stagingjump01, staginglb01,
-  staginglb02 in the fetched s3://bondlink-rundeck/staging.xml inventory.
-
-  Source job has NO <notification> block at all — no errors: task added here either,
-  to match Rundeck fidelity rather than invent a notification that wasn't there.
+  (6139b5af) — targets NodeType=bastion,proxy, which resolves to stagingjump01, staginglb01,
+  staginglb02
 
   Uses io.kestra.plugin.core.flow.ForEach (values/tasks/concurrencyLimit, iteration
   var {{ taskrun.value }} — confirmed via bytecode + docs) instead of one hand-written
   task per host, since Rundeck's `parallel` strategy here maps directly onto it.
 
 tasks:
+  - id: discover_bondlink_hosts
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - instances.json
+    commands:
+      - |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=staging" "Name=tag:NodeType,Values=bastion,proxy" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          --output json > instances.json
+
   - id: sync_per_host
     type: io.kestra.plugin.core.flow.ForEach
-    values:
-      - stagingjump01.staging.vpc
-      - staginglb01.staging.vpc
-      - staginglb02.staging.vpc
+    values: "{{ fromJson(read(outputs.discover_bondlink_hosts.outputFiles['instances.json'])) }}"
     concurrencyLimit: 0
     tasks:
       - id: sync
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}"
+        host: "{{ taskrun.value }}.staging.vpc"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
         privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
         strictHostKeyChecking: "no"
         commands:
-          - /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
+          - /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
 
 triggers:
   - id: schedule
     type: io.kestra.plugin.core.trigger.Schedule
     cron: "0 5 * * *"
     timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Suricata Logs failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
