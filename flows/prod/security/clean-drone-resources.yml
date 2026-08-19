@@ -26,7 +26,7 @@ tasks:
       - |
         aws ec2 describe-instances \
           --filters "Name=tag:NodeType,Values=drone-agent" "Name=instance-state-name,Values=running" \
-          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []"
           --output json > instances.json
 
   - id: clean_servers
@@ -36,7 +36,7 @@ tasks:
     tasks:
       - id: clean
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}.bondlink.vpc"
+        host: "{{ taskrun.value }}
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY

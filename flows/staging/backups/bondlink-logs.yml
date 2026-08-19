@@ -39,7 +39,7 @@ tasks:
       - |
         aws ec2 describe-instances \
           --filters "Name=tag:Environment,Values=staging" "Name=tag:BondLinkApp,Values=true" "Name=instance-state-name,Values=running" \
-          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []"
           --output json > instances.json
 
   - id: backup_per_host
@@ -49,7 +49,7 @@ tasks:
     tasks:
       - id: backup
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}.staging.vpc"
+        host: "{{ taskrun.value }}
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY

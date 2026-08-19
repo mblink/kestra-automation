@@ -19,7 +19,7 @@ tasks:
       - |
         aws ec2 describe-instances \
           --filters "Name=tag:Environment,Values=staging" "Name=tag:NodeType,Values=bastion,proxy" "Name=instance-state-name,Values=running" \
-          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []"
           --output json > instances.json
 
   - id: sync_per_host
@@ -29,7 +29,7 @@ tasks:
     tasks:
       - id: sync
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}.staging.vpc"
+        host: "{{ taskrun.value }}
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
