@@ -37,7 +37,7 @@ tasks:
       - |
         aws ec2 describe-instances \
           --filters "Name=tag:Environment,Values=staging" "Name=instance-state-name,Values=running" \
-          "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []"
+          "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []" \
           --output json > instances.json
 
   - id: backup_per_host
