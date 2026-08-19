@@ -29,7 +29,7 @@ tasks:
     tasks:
       - id: sync
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}
+        host: "{{ taskrun.value }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
