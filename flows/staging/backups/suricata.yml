@@ -36,7 +36,8 @@ tasks:
         privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
         strictHostKeyChecking: "no"
         commands:
-          - /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
+          - |
+            /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
 
 triggers:
   - id: schedule

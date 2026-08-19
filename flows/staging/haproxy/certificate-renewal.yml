@@ -24,10 +24,11 @@ tasks:
     privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
     strictHostKeyChecking: "no"
     commands:
-      - if [ -z "$(sudo getfacl -p /var/cache/salt/minion/roots/mtime_map | grep user:salt:rw)" ]; then
+      - |
+        if [ -z "$(sudo getfacl -p /var/cache/salt/minion/roots/mtime_map | grep user:salt:rw)" ]; then
           sudo setfacl -m u:salt:rw -R /var/cache/salt/minion/roots/mtime_map
         fi
-      - sudo salt-run letsencrypt.renew --out=json | jq -re 'select(.success == true)'
+        sudo salt-run letsencrypt.renew --out=json | jq -re 'select(.success == true)'
 
 
   - id: notify_success
