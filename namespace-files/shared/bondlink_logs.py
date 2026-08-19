@@ -66,7 +66,10 @@ def backup_logs(s3:boto3.client, logs: List[str]) -> List[LogKey]:
 def cleanup(logs):
   for f in logs:
     print(f"Removing {ROOT_DIR}/{f}")
-    os.unlink(f'{ROOT_DIR}/{f}')
+    try:
+      os.unlink(f'{ROOT_DIR}/{f}')
+    except Exception as e:
+      print(f"Failed to remove {ROOT_DIR}/{f}, Exception: {e}")
 
 if __name__ == '__main__':
   s3 = boto3.client('s3')

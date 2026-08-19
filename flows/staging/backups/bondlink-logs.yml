@@ -72,8 +72,8 @@ tasks:
             cat > /tmp/bondlink_logs.py <<'BONDLINK_LOGS_SCRIPT'
             {{ read('bondlink_logs.py', namespace='shared') }}
             BONDLINK_LOGS_SCRIPT
-            /opt/saltstack/salt/bin/python3 /tmp/bondlink_logs.py
-            rm -f /tmp/bondlink_logs.py
+            sudo /opt/saltstack/salt/bin/python3 /tmp/bondlink_logs.py
+            sudo rm -f /tmp/bondlink_logs.py
 
 triggers:
   - id: schedule
