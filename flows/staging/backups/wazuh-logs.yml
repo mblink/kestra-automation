@@ -1,0 +1,32 @@
+id: wazuh-logs
+namespace: staging.backups
+
+description: |
+  Backup all wazuh logs. Migrated from Rundeck job Staging/Backups/Wazuh Logs
+  (8a7df4c8) — DISABLED in Rundeck (scheduleEnabled: false), so no trigger is
+  defined here either. Targets tags:monitor, which resolves to stagingsalt only in
+  the fetched staging.xml inventory.
+
+tasks:
+  - id: sync_logs
+    type: io.kestra.plugin.fs.ssh.Command
+    host: stagingsalt.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - sudo /usr/local/bin/aws s3 sync /var/ossec/logs/alerts s3://bondlink-data/ossec-logs/staging/ --only-show-errors
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Wazuh Logs failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

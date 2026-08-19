@@ -1,0 +1,32 @@
+id: ocsp-updates
+namespace: staging.haproxy
+
+description: |
+  Revalidate OCSP staples. Migrated from Rundeck job Staging/haproxy/OCSP Updates
+  (ada2f163) — DISABLED in Rundeck (scheduleEnabled: false), so no trigger is defined
+  here either. Script (/etc/haproxy/renew_ocsp.sh) already lives on the host, not
+  tracked in this repo — plain exec, no inlining possible.
+
+tasks:
+  - id: run_renewal
+    type: io.kestra.plugin.fs.ssh.Command
+    host: staginglb01.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - sudo bash +x /etc/haproxy/renew_ocsp.sh
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] OCSP Update failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

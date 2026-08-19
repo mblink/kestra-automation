@@ -1,0 +1,32 @@
+id: kestra-bootstrap
+namespace: system
+
+description: |
+  LOCAL-DEV CONVENIENCE ONLY — syncs this repo's flows/ tree into a local Kestra
+  instance using Kestra's own internal git-sync plugin. This is NOT the production
+  sync mechanism: per the salt/kestra state (id_rsa_bldeploy + GitHub PAT askpass
+  script), production instead does a host-level `git pull` (mirroring rundeck-jobs'
+  sync_git.sh) followed by `kestra flow namespace update <ns> <dir> --server ...
+  --user=USER:PASS` (OSS CLI auth is basic-auth, no --api-token — that's
+  Enterprise-only).
+
+  Namespace Files are not used at all — shared scripts are inlined directly into
+  each flow's commands (quoted heredocs), so there's nothing else to sync here.
+
+  Run manually (no trigger yet) until validated — dryRun: true; flip to false once
+  you've reviewed a dry-run diff in the execution output.
+
+  Requires a GITHUB_SSH_PRIVATE_KEY secret (personal key with read access to this
+  repo) provisioned before running for real.
+
+tasks:
+  - id: sync_prod_flows
+    type: io.kestra.plugin.git.SyncFlows
+    url: git@github.com:jeffdyke/kestra-automation.git
+    branch: main
+    privateKey: "{{ secret('GITHUB_SSH_PRIVATE_KEY') }}"
+    gitDirectory: flows/prod
+    targetNamespace: prod
+    includeChildNamespaces: true
+    delete: true
+    dryRun: true

@@ -1,0 +1,87 @@
+id: backup-binary-logs
+namespace: prod.backups
+
+description: |
+  Back up binary logs of cluster nodes. Migrated from Rundeck job
+  Prod/Backups/Backup Binary Logs (27e0de96) — original Rundeck strategy was
+  `parallel` across proddb01,proddb03 with threadcount 3; translated here to two
+  independent SSH tasks with no dependsOn (Kestra runs unconnected tasks concurrently).
+
+  Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck.
+
+  GAP: proddb03 does not appear in the fetched s3://bondlink-rundeck/prod.xml node
+  inventory at all (only proddb01/proddb02 exist there) — it may be renamed/decommissioned.
+  Confirm the real second target host against live Rundeck before trusting this flow.
+
+  Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
+  sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
+  the running image by inspecting the jar's bytecode, since Kestra's own docs page
+  for this task has two inaccuracies: it names the type io.kestra.plugin.twilio.
+  sendgrid.SendGridMailSend (wrong package) and its example uses htmlTextContent
+  (that's the *other* MailSend task's field name — this one is htmlContent). No SMTP
+  host/port/mail-domain/TLS settings needed at all — just sendgridApiKey, referenced
+  as the SENDGRID_API_KEY secret. This supersedes the earlier mail.bondlink.vpc SMTP
+  relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
+  the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
+
+  binlog_backups.sh is inlined below (quoted heredoc) rather than pulled from
+  Namespace Files. Source of truth remains rundeck-jobs' databases/binlog_backups.sh.
+
+tasks:
+  - id: backup_proddb01
+    type: io.kestra.plugin.fs.ssh.Command
+    host: proddb01.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
+        #!/usr/bin/env bash
+        CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
+        sudo /usr/local/bin/aws s3 sync /var/log/mysql/ s3://bondlink-data/backups/mysql/binlogs/$HOSTNAME/ --exclude="*" --include="*bin*" --exclude="*index*" --exclude="${CURRENT}" --only-show-errors
+        BINLOG_SCRIPT
+        chmod +x /tmp/binlog_backups.sh
+        sudo /tmp/binlog_backups.sh
+        rm -f /tmp/binlog_backups.sh
+
+  - id: backup_proddb03
+    type: io.kestra.plugin.fs.ssh.Command
+    host: proddb03.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
+        #!/usr/bin/env bash
+        CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
+        sudo /usr/local/bin/aws s3 sync /var/log/mysql/ s3://bondlink-data/backups/mysql/binlogs/$HOSTNAME/ --exclude="*" --include="*bin*" --exclude="*index*" --exclude="${CURRENT}" --only-show-errors
+        BINLOG_SCRIPT
+        chmod +x /tmp/binlog_backups.sh
+        sudo /tmp/binlog_backups.sh
+        rm -f /tmp/binlog_backups.sh
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 */12 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Backup Binary Logs failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

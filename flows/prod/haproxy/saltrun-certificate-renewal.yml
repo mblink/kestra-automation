@@ -1,0 +1,65 @@
+id: saltrun-certificate-renewal
+namespace: prod.haproxy
+
+description: |
+  Renew all certificates due in less than 30 days. Migrated from Rundeck job
+  Prod/haproxy/SaltRun: Certificate Renewal (90d31943).
+
+  CRON GAP: source schedule is weekday='2' (Rundeck/Quartz-style numbering, SUN=1).
+  If that convention holds, day='2' = Monday = standard-cron dow 1, hence "0 7 * * 1"
+  below — but this is NOT confirmed against Rundeck's live "next run" display, per
+  this repo's cron-conversion caveat. Verify before relying on this trigger.
+
+  Demonstrates the dual onfailure/onsuccess notification pattern: the success email
+  is just a second task that only runs if run_renewal succeeds (Kestra's default
+  task-graph behavior); the failure email is the flow-level errors: task.
+
+  Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
+  sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
+  the running image by inspecting the jar's bytecode, since Kestra's own docs page
+  for this task has two inaccuracies: it names the type io.kestra.plugin.twilio.
+  sendgrid.SendGridMailSend (wrong package) and its example uses htmlTextContent
+  (that's the *other* MailSend task's field name — this one is htmlContent). No SMTP
+  host/port/mail-domain/TLS settings needed at all — just sendgridApiKey, referenced
+  as the SENDGRID_API_KEY secret. This supersedes the earlier mail.bondlink.vpc SMTP
+  relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
+  the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
+
+tasks:
+  - id: run_renewal
+    type: io.kestra.plugin.fs.ssh.Command
+    host: prodsalt.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - sudo salt-run letsencrypt.renew
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Certification Renewal Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 7 * * 1"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Certification Renewal Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

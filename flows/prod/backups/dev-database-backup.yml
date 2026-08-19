@@ -1,0 +1,306 @@
+id: dev-database-backup
+namespace: prod.backups
+
+description: |
+  Database backups for developers (no data for Emails, ActivityNotifications, or
+  IssuerPaymentTokens). Migrated from Rundeck job Prod/Backups/Dev Database Backup
+  (28f6e88b) — originally a 3-step copyfile+exec+scriptfile job against proddbanalytics,
+  collapsed here into one SSH session since io.kestra.plugin.fs.ssh.Command runs all
+  `commands` entries joined in a single exec channel.
+
+  Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck before
+  relying on the exact trigger time.
+
+  NOTE: dev_bondlink_backup.sh sources /src/oddjob/mariadb/backup_lib.sh on the target
+  host, which is NOT part of this repo — that dependency must already exist on
+  proddbanalytics (as it does today for Rundeck) for this flow to succeed.
+
+  Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
+  sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
+  the running image by inspecting the jar's bytecode, since Kestra's own docs page
+  for this task has two inaccuracies: it names the type io.kestra.plugin.twilio.
+  sendgrid.SendGridMailSend (wrong package) and its example uses htmlTextContent
+  (that's the *other* MailSend task's field name — this one is htmlContent). No SMTP
+  host/port/mail-domain/TLS settings needed at all — just sendgridApiKey, referenced
+  as the SENDGRID_API_KEY secret. This supersedes the earlier mail.bondlink.vpc SMTP
+  relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
+  the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
+
+  Shared scripts are inlined below (quoted heredoc delimiters, so nothing is expanded
+  by the outer shell) rather than pulled from Namespace Files — simpler than standing
+  up a separate namespace-files sync mechanism, at the cost of duplicating the script
+  body anywhere else it's reused (e.g. delete_versions.sh also appears in other
+  Backups flows with different args). Source of truth for both scripts remains
+  rundeck-jobs' databases/dev_bondlink_backup.sh and aws/delete_versions.sh — if those
+  change, this flow needs a matching manual update.
+
+tasks:
+  - id: backup_and_prune
+    type: io.kestra.plugin.fs.ssh.Command
+    host: proddbanalytics.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/dev_bondlink_backup.sh <<'BACKUP_SCRIPT'
+        #!/usr/bin/env bash
+        set -e
+        . /src/oddjob/mariadb/backup_lib.sh
+        declare -i CORES=0
+        F_DATE=$(date '+%Y-%m-%d_%H-%M-%S')
+        END_DAILY=$(date -d "now - 10 days" '+%Y-%m-%d')
+        CORES=$(cat /proc/cpuinfo | grep processor | wc -l | awk '{ print $NF/2 }' )
+        TMP=$(sudo mktemp -d '/tmp/devbackup.XXXXXXXXXX')
+        sudo chmod -R 777 ${TMP}
+        CWD=$(pwd)
+        trap resync EXIT
+        desync
+
+        sudo mariadb-dump \
+          --databases BondLink \
+          --no-create-db \
+          --no-data \
+          --routines \
+          --skip-triggers \
+          > ${TMP}/BondLink_schema.sql
+
+        sudo mariadb-dump \
+          --databases BondLink \
+          --single-transaction \
+          --no-create-db \
+          --no-create-info \
+          --skip-triggers \
+          --ignore-table=BondLink.IssuerPaymentTokens \
+          --ignore-table=BondLink.ActivityNotifications \
+          --ignore-table=BondLink.ActivityNotifications1Y \
+          > ${TMP}/BondLink_data.sql
+
+        sudo mariadb-dump \
+          --databases BondLink \
+          --no-create-db \
+          --no-create-info \
+          --no-data \
+          --triggers \
+          > ${TMP}/BondLink_triggers.sql
+
+        resync
+        cd ${TMP}
+        sq="'"
+        printf '
+        #!/usr/bin/env bash
+
+        set -exo pipefail
+
+        SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+        # Recreate database so tables that exist in dev but not yet prod are removed
+        sudo mariadb -e "SET foreign_key_checks = 0; DROP DATABASE IF EXISTS BondLink;"
+        sudo mariadb -e "CREATE DATABASE BondLink;"
+
+        load_db_file() {
+          # Remove definer declarations and sandbox mode comment to prevent errors in dev
+          sed -E '$sq's/DEFINER=[^ |\*]*//g'$sq' "$1" \
+          | sed -E '$sq's@^/\*M?!999999\\\\- enable the sandbox mode \*/@@g'$sq' \
+          | sudo mariadb BondLink
+        }
+
+        load_db_file "$SCRIPT_DIR/BondLink_schema.sql"
+        load_db_file "$SCRIPT_DIR/BondLink_data.sql"
+        load_db_file "$SCRIPT_DIR/BondLink_triggers.sql"
+
+        # Update all custom domains and prep `/etc/hosts` for viewing them locally
+        sudo mariadb -e "UPDATE Banks SET custom_domain = REGEXP_REPLACE(custom_domain, '$sq'\.(gov|com|co|info|org|net|edu|us|bs)$'$sq', '$sq'.local'$sq') WHERE custom_domain IS NOT NULL;" BondLink
+        sudo mariadb -e "UPDATE Issuers SET custom_domain = REGEXP_REPLACE(custom_domain, '$sq'\.(gov|com|co|info|org|net|edu|us|bs)$'$sq', '$sq'.local'$sq') WHERE custom_domain != '$sq$sq';" BondLink
+
+        all_domains="$(mktemp)"
+        trap '$sq'rm -f "$all_domains"'$sq' EXIT
+
+        sudo mariadb -B -N -e '$sq'
+        SELECT DISTINCT host
+        FROM (
+          # All bank custom domain hosts, potentially with `www.`
+          (
+            SELECT DISTINCT custom_domain COLLATE utf8mb4_unicode_ci AS custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain COLLATE utf8mb4_unicode_ci, "^https?://", "")) AS host
+            FROM Banks
+            WHERE custom_domain IS NOT NULL
+            ORDER BY custom_domain ASC
+          )
+          UNION ALL
+          # All bank custom domain hosts, without `www.`
+          (
+            SELECT DISTINCT custom_domain COLLATE utf8mb4_unicode_ci, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain COLLATE utf8mb4_unicode_ci, "^https?://www\.", "")) AS host
+            FROM Banks
+            WHERE custom_domain IS NOT NULL
+            ORDER BY custom_domain ASC
+          )
+          UNION ALL
+          # All issuer custom domain hosts, potentially with `www.`
+          (
+            SELECT DISTINCT custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain, "^https?://", "")) AS host
+            FROM Issuers
+            WHERE custom_domain != ""
+            ORDER BY custom_domain ASC
+          )
+          UNION ALL
+          # All issuer custom domain hosts, without `www.`
+          (
+            SELECT DISTINCT custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain, "^https?://www\.", "")) AS host
+            FROM Issuers
+            WHERE custom_domain != ""
+            ORDER BY custom_domain ASC
+          )
+        ) AS hosts
+        ORDER BY custom_domain, host
+        '$sq' BondLink > "$all_domains"
+
+        blcd="BondLink custom domains -- DO NOT REMOVE THIS COMMENT"
+        lead="### BEGIN $blcd"
+        leadrx="^$lead$"
+        tail="### END $blcd"
+        tailrx="^$tail$"
+
+        set +x
+
+        hosts="$(cat /etc/hosts)"
+
+        # The hosts file contains the begin line but not the end line
+        if grep -q "$leadrx" <<< "$hosts"; then
+          if ! grep -q "$tailrx" <<< "$hosts"; then
+            hosts="$(sed -E "s/$leadrx//g" <<< "$hosts")"
+          fi
+        fi
+
+        # The hosts file contains the end line but not the begin line
+        if grep -q "$tailrx" <<< "$hosts"; then
+          if ! grep -q "$leadrx" <<< "$hosts"; then
+            hosts="$(sed -E "s/$tailrx//g" <<< "$hosts")"
+          fi
+        fi
+
+        # The hosts file contains both the begin and end lines
+        if grep -q "$leadrx" <<< "$hosts"; then
+          if grep -q "$tailrx" <<< "$hosts"; then
+            hosts="$(sed -e "/$leadrx/,/$tailrx/{ /$leadrx/{p; r $all_domains" -e " }; /$tailrx/p; d;}" <<< "$hosts")"
+          fi
+        fi
+
+        # The hosts file contains neither the begin nor end line
+        if ! grep -q "$leadrx" <<< "$hosts"; then
+          if ! grep -q "$tailrx" <<< "$hosts"; then
+            hosts="$hosts\\n\\n$lead\\n$(cat "$all_domains")\\n$tail"
+          fi
+        fi
+
+        # Backup the existing hosts file, then overwrite it
+        sudo mv /etc/hosts /etc/hosts.bak
+        printf "$hosts" | sudo tee /etc/hosts > /dev/null
+
+        #clear the redis of all databases
+        redis-cli -h localhost FLUSHALL;
+
+        ' | sudo tee BondLink_restore.sh > /dev/null
+
+        BUCKET="bondlink-data"
+        REGION="us-west-2"
+        PREFIX="backups/mysql/us-east-2/devbackups"
+        tar cf bondlink_dev_backup_${F_DATE}.tar BondLink_schema.sql BondLink_data.sql BondLink_triggers.sql BondLink_restore.sh
+        /usr/bin/zstd -14 --no-progress -T${CORES} bondlink_dev_backup_${F_DATE}.tar
+        sudo /usr/local/bin/aws s3 cp bondlink_dev_backup_${F_DATE}.tar.zst s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst --only-show-errors
+        echo s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst
+        cd $CWD
+        sudo rm -rf ${TMP}
+        exit 0;
+        BACKUP_SCRIPT
+        chmod +x /tmp/dev_bondlink_backup.sh
+        bash +x /tmp/dev_bondlink_backup.sh
+
+        cat > /tmp/delete_versions.sh <<'PRUNE_SCRIPT'
+        #!/usr/bin/env bash
+        REGION=
+        PREFIX=
+        BUCKET=
+        DAYS="30"
+        FORCE=0
+        function usage {
+          echo "Usage: $0 -r region -b bucket -p prefix -d [number of days] -f (force, don't prompt)"
+        }
+        while getopts r:b:p:d:f OPT; do
+
+          case "$OPT" in
+            r)
+              REGION="${OPTARG}" ;;
+            p)
+              PREFIX="${OPTARG}" ;;
+            b)
+              BUCKET="${OPTARG}" ;;
+            d)
+              DAYS="${OPTARG}"
+              ;;
+            f)
+              FORCE=1
+              ;;
+            ?)
+              usage "$@" && exit 2 ;;
+          esac
+        done;
+        END_DAILY=$(date -d "now - ${DAYS} days" +'%Y-%m-%d')
+        VERSIONQ="?LastModified < '${END_DAILY}'"
+
+        echo "Deleting contents matching ${REGION} ${BUCKET}/${PREFIX}/ filtering on ${VERSIONQ}"
+        answer=
+        if [ $FORCE -eq 0 ]; then
+          echo "Apply these changes [Y/n]"
+          read answer
+        fi
+
+        if [[ "$answer" != "${answer#[Yy]}" || $FORCE -eq 1 ]] ;then
+          echo "Running query, deleting in batches"
+        #set -x
+          aws s3api list-object-versions \
+              --region "$REGION" \
+              --bucket "$BUCKET" \
+              --prefix "${PREFIX}/" \
+              --query  "Versions[${VERSIONQ}].[Key,VersionId]" \
+              --no-cli-pager \
+              --output text |
+          awk '{ acc = acc "{Key=" $1 ",VersionId=" $2 "}," }
+               NR % 500 == 0 {print "Objects=[" acc "],Quiet=False"; acc="" }
+               END { print "Objects=[" acc "],Quiet=False" }' |
+          awk '{gsub(/{Key=None,VersionId=},/, "");}1' |
+          while read batch; do
+          if [ "$batch" = "Objects=[],Quiet=False" ]; then
+              echo "Nothing to delete"
+            else
+              aws s3api delete-objects --bucket "$BUCKET" --delete "$batch" --output text --no-cli-pager
+            fi
+          done
+        else
+          echo "Not applying query"
+        fi
+        PRUNE_SCRIPT
+        chmod +x /tmp/delete_versions.sh
+        bash +x /tmp/delete_versions.sh -r us-east-1 -b bondlink-data -p "backups/mysql/us-east-2/devbackups" -d 10 -f
+
+        rm -f /tmp/dev_bondlink_backup.sh /tmp/delete_versions.sh
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 4 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Dev database backups failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

@@ -1,0 +1,57 @@
+id: saltrun-database-backups
+namespace: prod.backups
+
+description: |
+  Production database backups, sync'd to S3.
+  Migrated from Rundeck job Prod/Backups/SaltRun: Database Backups (073b9e06).
+
+  NOTE: the source Rundeck job had no <nodefilters> block at all (unusual — most jobs
+  specify an explicit target). Since salt-run only runs on the Salt master, this flow
+  targets prodsalt as an assumption — confirm against the live Rundeck job's resolved
+  node list before treating this as validated.
+
+  Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
+  sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
+  the running image by inspecting the jar's bytecode, since Kestra's own docs page
+  for this task has two inaccuracies: it names the type io.kestra.plugin.twilio.
+  sendgrid.SendGridMailSend (wrong package) and its example uses htmlTextContent
+  (that's the *other* MailSend task's field name — this one is htmlContent). No SMTP
+  host/port/mail-domain/TLS settings needed at all — just sendgridApiKey, referenced
+  as the SENDGRID_API_KEY secret. This supersedes the earlier mail.bondlink.vpc SMTP
+  relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
+  the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
+
+tasks:
+  - id: run_backup
+    type: io.kestra.plugin.fs.ssh.Command
+    host: prodsalt.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        if [ -z "$(sudo getfacl -p /var/cache/salt/minion/roots/mtime_map | grep user:salt:rw)" ]; then
+          sudo setfacl -m u:salt:rw -R /var/cache/salt/minion/roots/mtime_map
+        fi
+        sudo salt-run backups.replica server=proddb03 destination=s3 --out=json | jq -re 'select(.success == true)'
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "30 7 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Backup Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

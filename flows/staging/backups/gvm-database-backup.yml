@@ -1,0 +1,43 @@
+id: gvm-database-backup
+namespace: staging.backups
+
+description: |
+  GVM database backup, synced to S3. Migrated from Rundeck job
+  Staging/Backups/GVM Database Backup (54065c4e) — DISABLED in Rundeck
+  (executionEnabled: false), so no trigger is defined here either.
+
+  GAP: the source job runs databases/backup_postgres_gvm.sh via scriptfile, but that
+  script does NOT exist anywhere in the rundeck-jobs repo (checked aws/, databases/,
+  haproxy/, logs/, suricata/, wazuh/ — no match). It may only ever have existed on the
+  target host itself, or been lost. This flow is a stub: the SSH task below is a
+  placeholder that will fail until the real script content is sourced (from
+  stagingsalt directly, if it's still there) and inlined here, matching this repo's
+  established pattern for other scriptfile-backed jobs.
+
+tasks:
+  - id: run_backup
+    type: io.kestra.plugin.fs.ssh.Command
+    host: stagingsalt.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        echo "STUB: backup_postgres_gvm.sh content not found in rundeck-jobs repo — source it from stagingsalt before relying on this flow" >&2
+        exit 1
+        # Original Rundeck invocation, for reference once the script is sourced:
+        #   sudo -u postgres <contents of databases/backup_postgres_gvm.sh>
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Backup Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

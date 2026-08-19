@@ -1,0 +1,54 @@
+id: certificate-renewal
+namespace: staging.haproxy
+
+description: |
+  Renew all certificates due in less than 30 days. Migrated from Rundeck job
+  Staging/haproxy/Certificate Renewal (46ec2d76).
+
+  CRON GAP: source schedule is weekday='2' (Rundeck/Quartz-style numbering, SUN=1),
+  so day='2' = Monday = standard-cron dow 1, hence "0 7 * * 1" below — NOT confirmed
+  against Rundeck's live "next run" display, same caveat as every other weekly job in
+  this repo. Source job also had no <timeZone> tag — UTC assumed.
+
+  Unlike the Prod SaltRun: Certificate Renewal flow, this calls a script that already
+  lives on the target host (/etc/letsencrypt/bin/cert_renew.sh) rather than a
+  salt-run command — no inlining needed, it's a plain exec.
+
+tasks:
+  - id: run_renewal
+    type: io.kestra.plugin.fs.ssh.Command
+    host: staginglb01.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - /etc/letsencrypt/bin/cert_renew.sh staginglb01
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Certification Renewal Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 7 * * 1"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Certification Renewal Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

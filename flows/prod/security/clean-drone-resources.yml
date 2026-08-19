@@ -1,0 +1,106 @@
+id: clean-drone-resources
+namespace: prod.security
+
+description: |
+  Prune docker resources on drone build agents. Migrated from Rundeck job
+  Prod/Security/Clean Drone Resources (c18e2825) — currently DISABLED in Rundeck
+  (executionEnabled: false), so no trigger is defined here either; run manually
+  from the Kestra UI to test, add a Schedule trigger only once re-enabled.
+
+  Original Rundeck node filter named proddroneagent01/02/03, but the current
+  s3://bondlink-rundeck/prod.xml inventory only has proddroneagent04/05/06 —
+  targets below use the hosts that actually exist today. Confirm against live
+  Rundeck whether 01-03 were renamed/decommissioned before trusting this mapping.
+
+  Original strategy was `node-first` (run full sequence on one host before the
+  next); translated here as 3 independent tasks with no dependsOn, matching this
+  repo's general parallel-vs-node-first convention since there's no real
+  cross-host dependency in a cleanup job like this.
+
+tasks:
+  - id: clean_proddroneagent04
+    type: io.kestra.plugin.fs.ssh.Command
+    host: proddroneagent04.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
+        cleanImg() {
+          for img in $(
+            sudo docker images --filter "reference=668874212870.dkr.ecr.us-east-1.amazonaws.com/$1:build-*" \
+              | awk '{ print $1":"$2 }' \
+              | tail -n +2
+          ); do
+            sudo docker rmi "$img" || echo "Failed to remove $img"
+          done
+        }
+        cleanImg 'basex'
+        cleanImg 'drone-build-java-17'
+        cleanImg 'drone-cache'
+        cleanImg 'drone-ecr-auth'
+        sudo docker rmi $(sudo docker images -f 'dangling=true' -q) || echo 'No dangling images to remove'
+        sudo docker system prune --volumes --force
+        sudo docker network prune --force
+        sudo docker volume prune --all --force
+
+  - id: clean_proddroneagent05
+    type: io.kestra.plugin.fs.ssh.Command
+    host: proddroneagent05.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
+        cleanImg() {
+          for img in $(
+            sudo docker images --filter "reference=668874212870.dkr.ecr.us-east-1.amazonaws.com/$1:build-*" \
+              | awk '{ print $1":"$2 }' \
+              | tail -n +2
+          ); do
+            sudo docker rmi "$img" || echo "Failed to remove $img"
+          done
+        }
+        cleanImg 'basex'
+        cleanImg 'drone-build-java-17'
+        cleanImg 'drone-cache'
+        cleanImg 'drone-ecr-auth'
+        sudo docker rmi $(sudo docker images -f 'dangling=true' -q) || echo 'No dangling images to remove'
+        sudo docker system prune --volumes --force
+        sudo docker network prune --force
+        sudo docker volume prune --all --force
+
+  - id: clean_proddroneagent06
+    type: io.kestra.plugin.fs.ssh.Command
+    host: proddroneagent06.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
+        cleanImg() {
+          for img in $(
+            sudo docker images --filter "reference=668874212870.dkr.ecr.us-east-1.amazonaws.com/$1:build-*" \
+              | awk '{ print $1":"$2 }' \
+              | tail -n +2
+          ); do
+            sudo docker rmi "$img" || echo "Failed to remove $img"
+          done
+        }
+        cleanImg 'basex'
+        cleanImg 'drone-build-java-17'
+        cleanImg 'drone-cache'
+        cleanImg 'drone-ecr-auth'
+        sudo docker rmi $(sudo docker images -f 'dangling=true' -q) || echo 'No dangling images to remove'
+        sudo docker system prune --volumes --force
+        sudo docker network prune --force
+        sudo docker volume prune --all --force

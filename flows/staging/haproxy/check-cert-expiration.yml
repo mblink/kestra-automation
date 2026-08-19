@@ -1,0 +1,135 @@
+id: check-cert-expiration
+namespace: staging.haproxy
+
+description: |
+  Check all live certs for expiration. Migrated from Rundeck job
+  Staging/haproxy/Check Cert Expiration (bfa8191f).
+
+  CRON GAP: source schedule is weekday='6' (Rundeck/Quartz-style numbering, SUN=1),
+  so day='6' = Friday = standard-cron dow 5, hence "0 8 * * 5" below — NOT confirmed
+  against Rundeck's live "next run" display, same caveat as every other weekly job in
+  this repo. Source job also had no <timeZone> tag — UTC assumed.
+
+  haproxy/cert_expiration.py is inlined below (quoted heredoc) rather than pulled
+  from Namespace Files — same convention as the rest of this repo. Source of truth
+  remains rundeck-jobs' haproxy/cert_expiration.py.
+
+tasks:
+  - id: check_expiration
+    type: io.kestra.plugin.fs.ssh.Command
+    host: staginglb02.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/cert_expiration.py <<'CERT_SCRIPT'
+        #!/usr/bin/env python3
+
+        import operator
+        import os
+        import datetime
+
+        from typing import List, Dict, Any
+        from dataclasses import dataclass
+        from pprint import pprint
+        import socket
+        import ssl
+
+        TIME_FORMAT = "%b %d %H:%M:%S %Y %Z"
+        CERT_DIRECTORY = "/etc/haproxy/certs"
+        DAYS = 30
+
+        class InvalidCertificate(BaseException):
+          pass
+
+        @dataclass
+        class Cert:
+            name: str
+            path: str = CERT_DIRECTORY
+
+            def __repr__(self) -> str:
+              return f"{self.name} - {self.expiry} - {self.days} -- "
+
+            def __post_init__(self) -> None:
+              self.cert_path = f"{self.path}/{self.name}"
+              self.cert = self.read()
+              self.expiry = self.expire()
+              self.days = (self.expiry - datetime.datetime.now()).days
+              dns_names = list(map(lambda x: x[1], self.cert['subjectAltName']))
+              #if there are two, the second is www
+              self.hostname = dns_names[1] if len(dns_names) == 2 else dns_names[0]
+
+              if not self.hostname:
+                raise InvalidCertificate(f"self.hostname is empty {list(dns_names)} {self.name}")
+
+            def read(self) -> Dict[str, Any]:
+              try:
+                return ssl._ssl._test_decode_cert(self.cert_path)
+              except BaseException as e:
+                print(f"Failed to read {self.cert_path} -- {e}")
+                raise e
+
+            def expire(self):
+              return datetime.datetime.strptime(self.cert['notAfter'], TIME_FORMAT)
+
+            def handshake(self):
+              context = ssl.create_default_context()
+              try:
+                with socket.create_connection((self.hostname, 443)) as sock:
+                  with context.wrap_socket(sock, server_hostname=self.hostname) as ssock:
+                    print(f"Valid {self.name} expires: {self.expiry}")
+              except (socket.gaierror, ssl.SSLError) as se:
+                print(f"Invalid host/certificate {se} -- {self.hostname}")
+                raise se
+
+        def main():
+
+          to_renew: List[Cert] = []
+          files = list(filter(lambda x: x.endswith(".pem"), os.listdir(CERT_DIRECTORY)))
+          for cert in files:
+              cert = Cert(cert)
+              cert.handshake()
+              if cert.days < DAYS:
+                  to_renew.append(cert)
+
+          if to_renew:
+              pprint(list(sorted(to_renew, key=operator.attrgetter("name"))))
+          else:
+              print("No certs are due to expire in under 30 days")
+
+        if __name__ == '__main__':
+          main()
+        CERT_SCRIPT
+        python /tmp/cert_expiration.py
+        rm -f /tmp/cert_expiration.py
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Check Cert Expiration successful"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 8 * * 5"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Check Cert Expiration failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

@@ -1,0 +1,41 @@
+id: suricata-update
+namespace: staging.suricata
+
+description: |
+  Update Suricata sources via salt orchestration. Migrated from Rundeck job
+  Staging/Suricata/Suricata Update (472e539f).
+
+  CRON GAP: source schedule is weekday='1,5' (Rundeck/Quartz-style numbering, SUN=1),
+  so day='1,5' = Sunday,Thursday = standard-cron dow 0,4, hence "0 0 * * 0,4" below —
+  NOT confirmed against Rundeck's live "next run" display, same caveat as every other
+  weekly job in this repo.
+
+tasks:
+  - id: run_orchestration
+    type: io.kestra.plugin.fs.ssh.Command
+    host: stagingsalt.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - sudo salt-run state.orchestrate suricata_update
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * 0,4"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Suricata Update failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

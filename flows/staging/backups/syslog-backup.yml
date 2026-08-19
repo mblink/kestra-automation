@@ -1,0 +1,76 @@
+id: syslog-backup
+namespace: staging.backups
+
+description: |
+  Backup all /var/log/sudoers*.gz to S3. Migrated from Rundeck job
+  Staging/Backups/Syslog Backup (cba07245) — targets tags:staging, which resolves to
+  ALL 9 nodes in the fetched s3://bondlink-rundeck/staging.xml inventory (every
+  staging node carries that tag).
+
+  Source job's dispatch.keepgoing=true (continue to other hosts even if one fails) —
+  represented here by concurrencyLimit: 0 on the ForEach wrapper rather than any
+  per-host error handling, since Kestra's ForEach doesn't stop other iterations when
+  one fails unless told to.
+
+  logs/syslogs.sh is inlined below (quoted heredoc) rather than pulled from
+  Namespace Files — same convention as the rest of this repo. Source of truth
+  remains rundeck-jobs' logs/syslogs.sh.
+
+tasks:
+  - id: backup_per_host
+    type: io.kestra.plugin.core.flow.ForEach
+    values:
+      - stagingjobs01.staging.vpc
+      - stagingjump01.staging.vpc
+      - staginglb01.staging.vpc
+      - staginglb02.staging.vpc
+      - stagingsalt.staging.vpc
+      - stagingweb01.staging.vpc
+      - stagingweb02.staging.vpc
+      - stagingweb03.staging.vpc
+      - stagingweb04.staging.vpc
+    concurrencyLimit: 3
+    tasks:
+      - id: backup
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ taskrun.value }}"
+        port: "2007"
+        username: bldeploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+        strictHostKeyChecking: "no"
+        commands:
+          - |
+            set -e
+            cat > /tmp/syslogs.sh <<'SYSLOG_SCRIPT'
+            #!/usr/bin/env bash
+
+            FOLDER=$(date +'%Y-%m' -d "yesterday")
+            FILE_MATCH=$(date +'%Y%m%d' -d "yesterday")
+
+            cd /var/log/
+            for f in $(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::'); do
+              sudo /usr/local/bin/aws s3 cp ${f} s3://bondlink-data/syslogs/${HOSTNAME}/${FOLDER}/${f} --only-show-errors
+            done
+            SYSLOG_SCRIPT
+            chmod +x /tmp/syslogs.sh
+            sudo /tmp/syslogs.sh
+            rm -f /tmp/syslogs.sh
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 12 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[staging_cron] Syslog Backup failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
