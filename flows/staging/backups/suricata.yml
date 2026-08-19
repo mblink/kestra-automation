@@ -19,7 +19,7 @@ tasks:
       - |
         aws ec2 describe-instances \
           --filters "Name=tag:Environment,Values=staging" "Name=tag:NodeType,Values=bastion,proxy" "Name=instance-state-name,Values=running" \
-          "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []" \
+          --query "Reservations[].Instances[].NetworkInterfaces[].PrivateDnsName | []" \
           --output json > instances.json
 
   - id: sync_per_host
