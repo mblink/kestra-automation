@@ -5,32 +5,51 @@ description: |
   Backup everything matching /var/log/bondlink/*.gz to S3. Migrated from Rundeck job
   Staging/Backups/BondLink Logs (f08c430a).
 
-  GAP: source node filter is "tags:web, tags:corporate, tags:docker, tags:partner,
-  tags:cron" — of these, only "web" exists anywhere in the fetched
-  s3://bondlink-rundeck/staging.xml inventory (9 nodes total). corporate/docker/
-  partner/cron tags match nothing in the current staging inventory — same pattern as
-  the corporate/partner gap already flagged on the Prod side. This flow only targets
-  the 4 stagingweb0X hosts as a result; confirm against live Rundeck whether the
-  other tags still resolve to anything before treating this as a complete migration.
+  Target hosts are now discovered dynamically via AWS instance tags
+  (Environment=staging, BondLinkApp=true, running) instead of a hardcoded list —
+  this supersedes the prior GAP note about the Rundeck source job's tag filter
+  ("tags:web, tags:corporate, tags:docker, tags:partner, tags:cron") only
+  resolving "web" against the fetched inventory. BondLinkApp=true is the tag that
+  actually captures every host running some part of the BondLink app stack (web,
+  jobs, ice/BaseX, salt master, jump, dev/build boxes), matching the Rundeck job's
+  original broad intent; the backup script itself no-ops cleanly on any host with
+  no /var/log/bondlink/*.gz files, so over-including a host here is harmless.
 
   logs/bondlink_logs.py is inlined below (quoted heredoc) rather than pulled from
   Namespace Files — same convention as the rest of this repo. Source of truth
   remains rundeck-jobs' logs/bondlink_logs.py. Note it imports `more_itertools` and
   `boto3` — confirm those are available in the target host's python3 environment.
 
+  PREREQUISITE (confirmed satisfied on prodsalt-arm, the host Kestra itself runs
+  on): discover_bondlink_hosts relies on prodsalt-arm's EC2 instance role for AWS
+  credentials (no injected keys) — AwsCLI runs its `aws` call in a sibling Docker
+  container, one network hop past the Kestra container's own IMDS access, so IMDSv2
+  needs a hop limit >= 2 or credential/region resolution silently fails. Verified:
+  prodsalt-arm's IamInstanceProfile is ProdMonitor, which has the AWS-managed
+  ReadOnlyAccess policy attached (covers ec2:DescribeInstances), and its
+  MetadataOptions are already HttpPutResponseHopLimit=3 / HttpTokens=required. No
+  infra change needed for this flow to work.
+
 tasks:
+  - id: discover_bondlink_hosts
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - instances.json
+    commands:
+      - |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=staging" "Name=tag:BondLinkApp,Values=true" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          --output json > instances.json
+
   - id: backup_per_host
     type: io.kestra.plugin.core.flow.ForEach
-    values:
-      - stagingweb01.staging.vpc
-      - stagingweb02.staging.vpc
-      - stagingweb03.staging.vpc
-      - stagingweb04.staging.vpc
+    values: "{{ fromJson(read(outputs.discover_bondlink_hosts.outputFiles['instances.json'])) }}"
     concurrencyLimit: 3
     tasks:
       - id: backup
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}"
+        host: "{{ taskrun.value }}.staging.vpc"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY

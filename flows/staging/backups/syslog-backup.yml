@@ -3,37 +3,51 @@ namespace: staging.backups
 
 description: |
   Backup all /var/log/sudoers*.gz to S3. Migrated from Rundeck job
-  Staging/Backups/Syslog Backup (cba07245) — targets tags:staging, which resolves to
-  ALL 9 nodes in the fetched s3://bondlink-rundeck/staging.xml inventory (every
-  staging node carries that tag).
+  Staging/Backups/Syslog Backup (cba07245) — targets tags:staging, which at export
+  time resolved to ALL 9 nodes in the fetched s3://bondlink-rundeck/staging.xml
+  inventory (every staging node carries that tag).
+
+  Target hosts are now discovered dynamically via AWS instance tags
+  (Environment=staging, running) instead of the frozen 9-host list from that
+  export — this naturally tracks the live staging fleet (currently 16 running
+  instances, including several added since the export: stagingdb01/02/05,
+  stagingredis-sa-arm, stagingops, ai-builds, develop-arm) and drops hosts that no
+  longer exist (the old list's stagingweb01/02 and staginglb01 are gone). The
+  backup script itself is a no-op on any host with no matching syslogs, so
+  over-including a host here is harmless — same rationale as bondlink-logs.yml,
+  which uses this identical discovery pattern (see that flow for the
+  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes, already
+  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
 
   Source job's dispatch.keepgoing=true (continue to other hosts even if one fails) —
-  represented here by concurrencyLimit: 0 on the ForEach wrapper rather than any
-  per-host error handling, since Kestra's ForEach doesn't stop other iterations when
-  one fails unless told to.
+  Kestra's ForEach doesn't stop other iterations when one fails unless told to, so
+  no per-host error handling is needed to preserve that behavior. concurrencyLimit
+  is capped at 3 (not unlimited) to throttle how many hosts run this in parallel.
 
   logs/syslogs.sh is inlined below (quoted heredoc) rather than pulled from
   Namespace Files — same convention as the rest of this repo. Source of truth
   remains rundeck-jobs' logs/syslogs.sh.
 
 tasks:
+  - id: discover_staging_hosts
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - instances.json
+    commands:
+      - |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=staging" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].Tags[?Key=='Name'].Value[] | []" \
+          --output json > instances.json
+
   - id: backup_per_host
     type: io.kestra.plugin.core.flow.ForEach
-    values:
-      - stagingjobs01.staging.vpc
-      - stagingjump01.staging.vpc
-      - staginglb01.staging.vpc
-      - staginglb02.staging.vpc
-      - stagingsalt.staging.vpc
-      - stagingweb01.staging.vpc
-      - stagingweb02.staging.vpc
-      - stagingweb03.staging.vpc
-      - stagingweb04.staging.vpc
+    values: "{{ fromJson(read(outputs.discover_staging_hosts.outputFiles['instances.json'])) }}"
     concurrencyLimit: 3
     tasks:
       - id: backup
         type: io.kestra.plugin.fs.ssh.Command
-        host: "{{ taskrun.value }}"
+        host: "{{ taskrun.value }}.staging.vpc"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
@@ -50,7 +64,7 @@ tasks:
 
             cd /var/log/
             for f in $(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::'); do
-              sudo /usr/local/bin/aws s3 cp ${f} s3://bondlink-data/syslogs/${HOSTNAME}/${FOLDER}/${f} --only-show-errors
+              sudo /usr/local/bin/aws s3 cp ${f} s3://bondlink-data-east/syslogs/${HOSTNAME}/${FOLDER}/${f} --only-show-errors
             done
             SYSLOG_SCRIPT
             chmod +x /tmp/syslogs.sh

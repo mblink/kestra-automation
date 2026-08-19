@@ -22,7 +22,7 @@ description: |
 tasks:
   - id: sync_prod_flows
     type: io.kestra.plugin.git.SyncFlows
-    url: git@github.com:jeffdyke/kestra-automation.git
+    url: git@github.com:mblink/kestra-automation.git
     branch: main
     privateKey: "{{ secret('GITHUB_SSH_PRIVATE_KEY') }}"
     gitDirectory: flows/prod
