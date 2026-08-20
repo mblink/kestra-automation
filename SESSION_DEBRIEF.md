@@ -1,5 +1,11 @@
 # Session debrief: Rundeck → Kestra migration
 
+> **This is a point-in-time snapshot, not living documentation.** It describes the
+> state of the migration as of whenever it was last updated — treat any claim here
+> (especially "X isn't possible yet" / "X doesn't exist") as something to verify
+> against the current code/tooling before acting on it, not as settled fact. Update
+> this file when you find it stale, the way you'd fix a bug.
+
 This repo (`github.com/mblink/kestra-automation`) holds **Kestra flow content only** —
 flow YAML and nothing else. It does not install or configure Kestra itself; that's a
 separate concern, owned by the `salt` repo's `salt/kestra/` state. See that repo's own
