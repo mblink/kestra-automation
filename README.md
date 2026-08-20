@@ -29,7 +29,11 @@ regression tests for specific bugs hit during the initial rollout (bare
 `taskrun.value.Field` instead of `fromJson(taskrun.value).Field`, bare `python3`
 instead of the salt onedir's interpreter, `namespaceFiles:` on an ssh.Command
 task, a notification nested inside a `ForEach`, capitalized AWS tag filter
-values) — each one was a real bug in a committed flow at some point, not a
+values, a literal `{#` anywhere — Pebble parses that as an unclosed comment
+and fails at execution time, not authoring time — and bare `aws` invocations
+in ssh.Command scripts, which need the full `/usr/local/bin/aws` path since
+Kestra's non-interactive SSH session doesn't have `/usr/local/bin` on its
+PATH) — each one was a real bug in a committed flow at some point, not a
 hypothetical.
 
 Runs on every PR via `.github/workflows/pytest.yml`.

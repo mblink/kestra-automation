@@ -82,7 +82,7 @@ tasks:
         keyRx='^'$s3Prefix'/IceGsm-(?<ym>[0-9]{4}-[0-9]{2})-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}\\.(zip|tar\\.br|tar\\.zst)$'
 
         keysByYearMonth="$(
-          aws s3api list-objects-v2 --bucket "$s3Bucket" --prefix "$s3Prefix" \
+          /usr/local/bin/aws s3api list-objects-v2 --bucket "$s3Bucket" --prefix "$s3Prefix" \
             | jq -c '
               .Contents
               | map(.Key)
@@ -110,7 +110,7 @@ tasks:
             apiJson="$(jq '{ "Objects": (. | map({ "Key": . })) }' <<< "$backupsToDelete")"
 
             if [ "$dryRun" = 0 ]; then
-              res="$(aws s3api delete-objects --bucket "$s3Bucket" --delete "$apiJson")"
+              res="$(/usr/local/bin/aws s3api delete-objects --bucket "$s3Bucket" --delete "$apiJson")"
 
               # The command above returns an exit code of 0 even when there were errors
               # so we need to check the response's errors key

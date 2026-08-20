@@ -25,7 +25,7 @@ description: |
 tasks:
   - id: clean_corp_preview
     type: io.kestra.plugin.fs.ssh.Command
-    host: prodsalt.bondlink.vpc
+    host: prodsalt-arm.bondlink.vpc
     port: "2007"
     username: bldeploy
     authMethod: PUBLIC_KEY
@@ -54,9 +54,7 @@ errors:
     from: kestra@bondlink.com
     to:
       - jeff@bondlink.com
-      - matt@bondlink.com
     subject: "Rundeck[prod_cron] Corp preview cleanup failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}
-

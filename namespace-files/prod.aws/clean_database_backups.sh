@@ -60,7 +60,7 @@ maybeDeleteBackup() {
         continue
       else
         log "*** Deleting ${checkType} - $i/$totalKeys *** aws s3 rm ${recursive}s3://bondlink-data/backups/mysql/bondlink-us-west-2/$item"
-        aws s3 rm ${recursive}s3://bondlink-data/backups/mysql/bondlink-us-west-2/$item --only-show-errors
+        /usr/local/bin/aws s3 rm ${recursive}s3://bondlink-data/backups/mysql/bondlink-us-west-2/$item --only-show-errors
       fi
     done;
   fi
@@ -70,7 +70,7 @@ declare -a deleteMonthlyDates
 declare -a deleteWeeklyDates
 declare -a saveDates
 declare -a afterStop
-for s3Key in $(aws s3 ls "${TOP_LEVEL}/" | grep "20" | awk '{ print $NF }'); do
+for s3Key in $(/usr/local/bin/aws s3 ls "${TOP_LEVEL}/" | grep "20" | awk '{ print $NF }'); do
   asDateS=$(keyToDateS "${s3Key}")
   if [[ ! -z "${STOP_DATE}" &&  "${asDateS}" > "${STOP_DATE}" ]]; then
     afterStop+=("$s3Key")

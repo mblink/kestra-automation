@@ -31,7 +31,7 @@ maybeDeleteBuild() {
   if [ "$epochMillis" -lt "$tenDaysAgoEpochMillis" ]; then
     log "Deleting build $progress -- $s3Uri"
     if [ "$dryRun" = 0 ]; then
-      aws s3 rm --recursive --only-show-errors "$s3Uri"
+      /usr/local/bin/aws s3 rm --recursive --only-show-errors "$s3Uri"
     fi
   else
     log "Preserving build $progress -- $s3Uri"
@@ -46,7 +46,7 @@ for bucket in "${!buckets[@]}"; do
 
   # List all matching keys and read them into an array
   readarray -t keys <<< $(
-    aws s3 ls "$s3Prefix/" \
+    /usr/local/bin/aws s3 ls "$s3Prefix/" \
       | grep -E '\s+preview-[0-9]+/' \
       | awk '{print $2}' \
       | sed -E 's@/$@@'

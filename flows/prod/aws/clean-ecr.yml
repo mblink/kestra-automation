@@ -85,7 +85,7 @@ tasks:
 
             if [ "$dryRun" = 0 ]; then
               res="$(
-                aws ecr batch-delete-image \
+                /usr/local/bin/aws ecr batch-delete-image \
                   --region "$region" \
                   --repository-name "$repo" \
                   --image-ids "$batch"
@@ -126,7 +126,7 @@ tasks:
 
             # Delete all images that don't have tags
             untaggedImageDigests="$(
-              aws ecr describe-images \
+              /usr/local/bin/aws ecr describe-images \
                 --region "$region" \
                 --repository-name "$repo" \
                 --filter 'tagStatus=UNTAGGED' \
@@ -145,7 +145,7 @@ tasks:
             log "***************** Checking feature branch images in ECR repo $repo in region $region"
 
             allImages="$(
-              aws ecr describe-images \
+              /usr/local/bin/aws ecr describe-images \
                 --region "$region" \
                 --repository-name "$repo" \
                 --output json \
@@ -184,7 +184,7 @@ tasks:
             log "***************** Check non-latest images in ECR repo $repo in region $region"
 
             allImages="$(
-              aws ecr describe-images \
+              /usr/local/bin/aws ecr describe-images \
                 --region "$region" \
                 --repository-name "$repo" \
                 --output json \

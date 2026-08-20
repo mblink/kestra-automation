@@ -6,13 +6,16 @@ a committed flow at some point and had to be fixed. See SESSION_DEBRIEF.md.
 """
 import re
 
-from conftest import find_tasks_of_type, iter_strings, walk
+import pytest
+
+from conftest import REPO_ROOT, find_tasks_of_type, iter_strings, walk
 
 BARE_TASKRUN_FIELD_ACCESS = re.compile(r"taskrun\.value\.[A-Za-z_]")
 BARE_PYTHON_INVOCATION = re.compile(r"(?<!/)\bpython3?\s+/tmp/\S+\.py\b")
 BAD_SHEBANG_LINES = {"#!/usr/bin/env python3", "#!/usr/bin/env python"}
 BAD_AWS_TAG_CASING = re.compile(r"Values=Staging\b|Values=Prod\b")
 NOTIFICATION_TYPE_MARKER = "notifications."
+BARE_AWS_INVOCATION = re.compile(r"(?:^|[|;`]|\$\()\s*aws\b")
 
 
 def test_no_bare_taskrun_value_field_access(flow, flow_path):
@@ -89,6 +92,50 @@ def test_notification_tasks_are_not_nested_inside_foreach(flow, flow_path):
                 f"per iteration instead of once per execution. Move it to a "
                 f"top-level sibling task after the ForEach."
             )
+
+
+def test_ssh_command_scripts_use_full_path_for_aws_cli(flow, flow_path):
+    # A real production failure: clean-corp-preview-s3.yml (copied verbatim
+    # from a Rundeck-era script) invoked bare `aws s3 ls ...`, which worked
+    # fine when run manually/under Rundeck but failed with "SSH command fails
+    # with exit status 127" (command not found) under Kestra's non-interactive
+    # ssh.Command session - /usr/local/bin isn't on that session's PATH, only
+    # /usr/bin is (which is why bare `jq`/`nproc` are fine but bare `aws`
+    # isn't). Every already-working flow in this repo uses the full
+    # /usr/local/bin/aws path for exactly this reason. Scoped to ssh.Command
+    # tasks only - io.kestra.plugin.aws.cli.AwsCLI tasks correctly use bare
+    # `aws`, since they run inside their own amazon/aws-cli container where it
+    # actually is on PATH (see any discover_*_hosts task).
+    for task in find_tasks_of_type(flow, "io.kestra.plugin.fs.ssh.Command"):
+        for command in task.get("commands", []):
+            for line in command.splitlines():
+                assert not BARE_AWS_INVOCATION.search(line), (
+                    f"{flow_path}: ssh.Command task '{task.get('id')}' invokes "
+                    f"bare `aws` - use the full /usr/local/bin/aws path: "
+                    f"{line!r}"
+                )
+
+
+def _discover_namespace_file_scripts():
+    return sorted((REPO_ROOT / "namespace-files").rglob("*.sh"))
+
+
+@pytest.mark.parametrize(
+    "script_path",
+    _discover_namespace_file_scripts(),
+    ids=lambda p: str(p.relative_to(REPO_ROOT)),
+)
+def test_namespace_file_scripts_use_full_path_for_aws_cli(script_path):
+    # Same bug as test_ssh_command_scripts_use_full_path_for_aws_cli, but
+    # scripts loaded via {{ read('<file>') }} never appear as literal text in
+    # the flow YAML, so that flow-scoped test can't see them - scan the actual
+    # namespace-files/**/*.sh sources directly instead.
+    content = script_path.read_text()
+    for line in content.splitlines():
+        assert not BARE_AWS_INVOCATION.search(line), (
+            f"{script_path}: invokes bare `aws` - use the full "
+            f"/usr/local/bin/aws path: {line!r}"
+        )
 
 
 def test_aws_filters_use_correct_tag_value_casing(flow, flow_path):

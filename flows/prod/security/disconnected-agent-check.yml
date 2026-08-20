@@ -46,7 +46,7 @@ tasks:
 
         TRY_CONNECT=
         checkInstanceState() {
-          aws ec2 describe-instances --filter "Name=tag:Name,Values=$1" --query "Reservations[*].Instances[*].State" | jq '.[][].Name' | sed 's/"//g'
+          /usr/local/bin/aws ec2 describe-instances --filter "Name=tag:Name,Values=$1" --query "Reservations[*].Instances[*].State" | jq '.[][].Name' | sed 's/"//g'
         }
         if [ ! -z "${DISCONNECTED}" ]; then
           for server in ${DISCONNECTED}; do

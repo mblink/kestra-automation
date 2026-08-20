@@ -90,6 +90,24 @@ the same fix pre-emptively, before it ever ran and failed the same way.
 `tests/test_known_pitfalls.py::test_no_literal_pebble_comment_start` guards
 against this recurring — any literal `{#` anywhere in a flow fails that test.
 
+**Fixing the Pebble bug surfaced a second, unrelated one on the same flow**:
+after the fix, `clean-corp-preview-s3.yml` still failed live with
+`SSH command fails with exit status 127` (command not found) — the script,
+copied verbatim from its Rundeck-era source, calls bare `aws s3 ls ...`.
+Kestra's `ssh.Command` runs a non-interactive session whose PATH includes
+`/usr/bin` (where bare `jq`/`nproc` resolve fine — confirmed by the log
+showing the script ran past those) but not `/usr/local/bin` (where `aws` is
+actually installed). Every already-working flow in this repo already used the
+full `/usr/local/bin/aws` path for exactly this reason — the newly-migrated
+scripts just hadn't been checked against that convention. Fixed everywhere
+found, including a **pre-existing** occurrence in `dev-database-backup.yml`'s
+`delete_versions.sh` heredoc that predates this session and had never been
+exercised. `tests/test_known_pitfalls.py::test_ssh_command_scripts_use_full_path_for_aws_cli`
+(inline flow content) and `test_namespace_file_scripts_use_full_path_for_aws_cli`
+(namespace-files/**/*.sh, invisible to the flow-scoped test) both guard against
+this recurring — deliberately exempting `io.kestra.plugin.aws.cli.AwsCLI` tasks,
+which correctly use bare `aws` inside their own dedicated container.
+
 Production sync (see "How flows actually get onto the production Kestra instance"
 below) now runs a `namespace files update` call per `namespace-files/<namespace>/`
 directory alongside its existing per-namespace `flow namespace update` loop — see
