@@ -100,3 +100,36 @@ def test_aws_filters_use_correct_tag_value_casing(flow, flow_path):
             f"{flow_path}: AWS filter uses capitalized tag value casing "
             f"(actual tags are lowercase): {value!r}"
         )
+
+
+def test_no_literal_pebble_comment_start(flow, flow_path):
+    # A real production failure: clean-corp-preview-s3.yml inlined a bash
+    # script using `${#keys[@]}` (array-length syntax). Kestra's Pebble
+    # template engine parses the literal `{#` inside that as the start of a
+    # *Pebble* comment (`{# ... #}`); bash never emits a matching `#}`, so
+    # Pebble scans to end-of-file still "inside" the comment and throws
+    # `ParserException: Unclosed comment` at execution time - it doesn't fail
+    # at authoring time, only when the flow actually runs. `${#array[@]}` /
+    # `${#var}` (bash length syntax) are the common way this happens, but the
+    # check is just for the literal substring, since that's what actually
+    # breaks parsing regardless of cause. Fix: move the script to a Namespace
+    # File and pull it in via read() instead of inlining it - read()'s return
+    # value is never re-parsed for template syntax, so it's immune (see
+    # clean-corp-preview-s3.yml / clean-production-db-backups.yml).
+    #
+    # Scoped to tasks/errors/triggers only, not the top-level description -
+    # Kestra doesn't Pebble-render description: (every flow already uses
+    # unescaped {{ }} in prose there with no issue), and several flows'
+    # descriptions legitimately quote the literal '{#' characters when
+    # explaining this exact bug.
+    executable_content = {
+        k: v for k, v in flow.items() if k in ("tasks", "errors", "triggers")
+    }
+    for value in iter_strings(executable_content):
+        assert "{#" not in value, (
+            f"{flow_path}: literal '{{#' found - Pebble will parse this as an "
+            f"unclosed comment and fail at execution time. If this came from "
+            f"bash's ${{#array[@]}}/${{#var}} length syntax, move the script to "
+            f"a Namespace File and pull it in via read() instead of inlining "
+            f"it: {value!r}"
+        )

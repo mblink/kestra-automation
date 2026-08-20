@@ -71,6 +71,25 @@ revisiting if a second flow reuses either). Each flow's description names the
 `rundeck-jobs` source-of-truth path for anything it inlines or reads from
 Namespace Files.
 
+**Namespace Files aren't only for sharing across flows — they're also the fix
+for a real production bug.** `prod/aws/clean-corp-preview-s3.yml` failed live
+with `io.pebbletemplates.pebble.error.ParserException: Unclosed comment`: its
+inlined script used bash's `${#keys[@]}` array-length syntax, and Kestra's
+Pebble template engine parses the literal `{#` inside that as the start of a
+*Pebble* comment — bash never emits a matching `#}`, so Pebble scans to
+end-of-file still "inside" the comment and fails at execution time, not
+authoring time. `read()`'s return value is never re-parsed for template
+syntax, so moving the script to a Namespace File sidesteps the whole class of
+bug rather than needing every `${#...}` occurrence escaped (fragile, easy to
+reintroduce). Since this fix isn't about cross-flow sharing, these live under
+`namespace-files/prod.aws/` (a per-namespace directory, not `shared/`) and are
+pulled in via a bare `{{ read('<file>') }}` — no `namespace=` override needed,
+since `read()` defaults to the calling flow's own namespace.
+`clean-production-db-backups.yml` had the identical bug (4 occurrences) and got
+the same fix pre-emptively, before it ever ran and failed the same way.
+`tests/test_known_pitfalls.py::test_no_literal_pebble_comment_start` guards
+against this recurring — any literal `{#` anywhere in a flow fails that test.
+
 Production sync (see "How flows actually get onto the production Kestra instance"
 below) now runs a `namespace files update` call per `namespace-files/<namespace>/`
 directory alongside its existing per-namespace `flow namespace update` loop — see

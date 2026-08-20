@@ -11,12 +11,18 @@ description: |
   Enterprise-only).
 
   Most shared scripts are still inlined directly into each flow's commands
-  (quoted heredocs). The exception: scripts genuinely shared across environments
-  (starting with logs/syslogs.sh) live as real Namespace Files under
-  namespace-files/shared/ in this repo, synced to Kestra's `shared` namespace and
-  pulled into flows via {{ read('syslogs.sh', namespace='shared') }}. This task
-  syncs that directory too so local dev matches what production's sync mechanism
-  is expected to do (see salt/kestra's sync-flows.sh for the production side).
+  (quoted heredocs). Two exceptions, both as real Namespace Files synced by the
+  tasks below (see salt/kestra's sync-flows.sh for the production side, which
+  loops over every namespace-files/<namespace>/ directory generically — this
+  flow needs one explicit task per namespace since Kestra flows can't loop):
+  scripts genuinely shared across environments (starting with logs/syslogs.sh)
+  live under namespace-files/shared/, pulled in via
+  {{ read('syslogs.sh', namespace='shared') }}; and scripts that just need to
+  avoid Kestra's Pebble template engine mis-parsing their content (e.g. bash's
+  `${#array[@]}` length syntax contains a literal `{#`, which Pebble parses as
+  an unclosed comment — see clean-corp-preview-s3.yml) live under
+  namespace-files/prod.aws/, pulled in via {{ read('<file>') }} (no namespace=
+  override needed since that's the calling flow's own namespace already).
 
   Run manually (no trigger yet) until validated — dryRun: true; flip to false once
   you've reviewed a dry-run diff in the execution output.
@@ -43,5 +49,15 @@ tasks:
     privateKey: "{{ secret('GITHUB_SSH_PRIVATE_KEY') }}"
     namespace: shared
     gitDirectory: namespace-files/shared
+    delete: true
+    dryRun: true
+
+  - id: sync_prod_aws_namespace_files
+    type: io.kestra.plugin.git.SyncNamespaceFiles
+    url: git@github.com:mblink/kestra-automation.git
+    branch: main
+    privateKey: "{{ secret('GITHUB_SSH_PRIVATE_KEY') }}"
+    namespace: prod.aws
+    gitDirectory: namespace-files/prod.aws
     delete: true
     dryRun: true
