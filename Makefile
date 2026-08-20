@@ -5,7 +5,7 @@ VENV := .venv
 PYTEST := $(shell [ -x $(VENV)/bin/pytest ] && echo $(VENV)/bin/pytest || echo pytest)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup test generate-error-block
+.PHONY: help setup test test-integration generate-error-block
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -15,8 +15,11 @@ setup: ## Create the test venv and install requirements-dev.txt (idempotent)
 	python3 -m venv $(VENV)
 	$(VENV)/bin/pip install -q -r requirements-dev.txt
 
-test: ## Run the flow YAML test suite
+test: ## Run the flow YAML test suite (static checks only, no AWS calls)
 	$(PYTEST) -v
+
+test-integration: ## Opt-in: run AwsCLI tasks for real against live AWS (needs real credentials; not in CI)
+	$(PYTEST) -v -s -m integration
 
 generate-error-block: ## Print the canonical errors: block template (TODO: real per-flow generation + drift check, see SESSION_DEBRIEF.md)
 	@echo 'errors:'

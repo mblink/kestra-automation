@@ -106,7 +106,19 @@ that's no longer true, see the Namespace Files section above.)
 over every `flows/**/*.yml` — not real flow execution. Covers baseline sanity
 (required keys, id/namespace match file path, ssh.Command connection fields,
 every flow has non-empty `errors:`/`triggers:` blocks) plus the salt-perms rule
-above. Wired into CI via `.github/workflows/pytest.yml`, runs on every PR.
+above, environment-isolation (a prod flow's `errors:` block can't mention
+staging and vice versa — the exact bug clean-drone-resources.yml had), and a
+grab-bag of specific bugs hit during the rollout (`tests/test_known_pitfalls.py`
+— bare `taskrun.value.Field`, bare `python3` instead of the salt onedir
+interpreter, `namespaceFiles:` on ssh.Command, notifications nested inside
+ForEach, capitalized AWS tag filter values). Wired into CI via
+`.github/workflows/pytest.yml`, runs on every PR.
+
+There's also one opt-in integration test (`tests/test_aws_cli_integration.py`,
+pytest marker `integration`, excluded from the default run via `pytest.ini`'s
+`addopts`) that actually runs every AwsCLI task's command for real against live
+AWS and asserts the result isn't empty, caching results per environment/flow to
+show drift between runs. Not in CI (no AWS creds there) — `make test-integration`.
 
 ## Known gaps, carried forward from the source Rundeck export (not fixed, by design)
 

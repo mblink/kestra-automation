@@ -42,6 +42,19 @@ def find_tasks_of_type(flow, task_type):
             yield node
 
 
+def iter_strings(node):
+    """Yield every string found anywhere in a nested structure - dict values,
+    list items, and the node itself if it's already a leaf string."""
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from iter_strings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from iter_strings(item)
+
+
 @pytest.fixture(
     params=discover_flow_paths(),
     ids=lambda p: str(p.relative_to(REPO_ROOT)),
