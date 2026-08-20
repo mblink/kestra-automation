@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -xeo pipefail
+set -eo pipefail
 
 dryRun=0
 if [ "$1" = '--dry-run' ]; then

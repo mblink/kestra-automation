@@ -46,6 +46,8 @@ tasks:
           bondlink-stream-consumers
           bondlink-web
           bondlink-web-ssr
+          bondlink-mariadb-mcp
+          bondlink-hydra-headless-ts
         )
 
         droneRepos=(
@@ -54,7 +56,6 @@ tasks:
           drone-build-java-25
           drone-cache
           drone-ecr-auth
-          drone-mariadb-mcp
           drone-oddjob
           drone-salt
           drone-scalatasks
@@ -239,4 +240,3 @@ errors:
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}
-
