@@ -17,9 +17,17 @@ migration — the two documents are meant to be read together.
 Source jobs are Rundeck's, exported from a separate `rundeck-jobs` repo (`Prod/*.xml`,
 `Staging/rundeck-staging_cron/jobs/*.xml`). Converted so far:
 
-- `flows/prod/{backups,haproxy,security}/` — 5 pilot flows, one per structural pattern
-  found in the ~31 Prod jobs (simple exec, multi-step-collapsed-to-one-SSH-task,
-  multi-host node-first, parallel/step-cron, dual onsuccess+onfailure notification).
+- `flows/prod/{aws,backups,database,haproxy,security}/` — started as 5 pilot flows
+  (one per structural pattern found in the ~31 Prod jobs), since reconciled against
+  the rest of `rundeck-jobs/Prod/*.xml` as jobs were found/deleted there: 19 Prod
+  flows total now. Two source jobs were deliberately NOT migrated: `044dbb1e` (Sync
+  Vulnerabilities — disabled at the source, needs a `scala-cli` runtime this repo
+  doesn't provide) and `11e0edb8` ("SaltRun: Backups BondLinkReporting" — a stale
+  duplicate of `0bb392d4`'s flow of the same name; no `<schedule>`/`<group>` block,
+  targets a CNAME-aliased hostname of the same host). Namespace directories
+  (`prod/aws`, `prod/database`, ...) map directly to each source job's Rundeck
+  `<group>` tag — `prod/logs`, `prod/ops`, `prod/suricata`, `prod/wazuh` stay empty
+  since no migrated job's group ever matched those names exactly.
 - `flows/staging/{backups,haproxy,suricata}/` — all 11 Staging jobs, fully converted
   (not just a pilot subset).
 - `ops/kestra-bootstrap.yml` — **local-dev convenience only**. Uses Kestra's own

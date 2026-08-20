@@ -1,0 +1,120 @@
+id: clean-corp-preview-s3
+namespace: prod.aws
+
+description: |
+  Clean up builds of the corp preview site stored in S3. Migrated from Rundeck job Prod/AWS/Clean corp preview S3 (9b9b5ba7).
+
+  Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated.
+
+  aws/clean_corp_preview.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow. Source of truth remains rundeck-jobs' aws/clean_corp_preview.sh. Source job called this with no args (live mode, not --dry-run).
+
+tasks:
+  - id: clean_corp_preview
+    type: io.kestra.plugin.fs.ssh.Command
+    host: prodsalt.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/clean_corp_preview.sh <<'CLEAN_CORP_PREVIEW_SCRIPT'
+        #!/usr/bin/env bash
+
+        set -eo pipefail
+
+        dryRun=0
+        if [ "$1" = '--dry-run' ]; then
+          dryRun=1
+        fi
+
+        cpus="$(nproc --all)"
+        parallelJobs=$((cpus / 2))
+
+        declare -A buckets
+        buckets=(["bondlink-corporate"]="production" ["bondlink-corporate-dev"]="staging")
+
+        tenDaysAgoEpochMillis="$(jq -r '((now - (10 * 24 * 60 * 60)) * 1000) | floor' <<< '{}')"
+
+        log() {
+          echo -e "[$(date +"%Y-%m-%dT%H:%M:%S")] $1"
+        }
+
+        maybeDeleteBuild() {
+          s3Prefix="$1"
+          key="$2"
+          progress="$3"
+
+          epochMillis="$(echo "$key" | sed -E 's/^preview-([0-9]+)$/\1/')"
+          s3Uri="$s3Prefix/$key"
+
+          # Delete the build if it occurred more than 10 days ago
+          if [ "$epochMillis" -lt "$tenDaysAgoEpochMillis" ]; then
+            log "Deleting build $progress -- $s3Uri"
+            if [ "$dryRun" = 0 ]; then
+              aws s3 rm --recursive --only-show-errors "$s3Uri"
+            fi
+          else
+            log "Preserving build $progress -- $s3Uri"
+          fi
+        }
+
+        for bucket in "${!buckets[@]}"; do
+          env="${buckets[$bucket]}"
+          s3Prefix="s3://$bucket/corp/$env"
+
+          log "***************** Checking corp preview builds in $s3Prefix"
+
+          # List all matching keys and read them into an array
+          readarray -t keys <<< $(
+            aws s3 ls "$s3Prefix/" \
+              | grep -E '\s+preview-[0-9]+/' \
+              | awk '{print $2}' \
+              | sed -E 's@/$@@'
+          )
+
+          keyCount=${#keys[@]}
+
+          # Keep track of the number of currently running jobs
+          # https://stackoverflow.com/a/53870978/2163024
+          numJobs="\j"
+
+          for idx in ${!keys[@]}; do
+            # If the number of jobs currently running is >= the number we want to run in parallel, wait until one finishes
+            # @P tells bash to expand numJobs, see the stack overflow link above
+            while (( ${numJobs@P} >= parallelJobs )); do
+              wait -n
+            done
+
+            maybeDeleteBuild "$s3Prefix" "${keys[$idx]}" "$((idx + 1)) / $keyCount" &
+          done
+
+          # Wait for all jobs to finish
+          wait
+        done
+        CLEAN_CORP_PREVIEW_SCRIPT
+        chmod +x /tmp/clean_corp_preview.sh
+        /tmp/clean_corp_preview.sh
+        rm -f /tmp/clean_corp_preview.sh
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "15 23 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+      - matt@bondlink.com
+    subject: "Rundeck[prod_cron] Corp preview cleanup failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
+

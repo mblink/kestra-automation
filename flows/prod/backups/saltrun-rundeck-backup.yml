@@ -1,0 +1,67 @@
+id: saltrun-rundeck-backup
+namespace: prod.backups
+
+description: |
+  A short running version of the database backups, but does back up rundeck
+  itself. Migrated from Rundeck job Prod/Database/SaltRun Rundeck backup
+  (d5025c9a).
+
+  BROKEN EXPORT: the source job's <schedule> block was empty/missing entirely
+  in the export (unlike wazuh-logs.yml's staging counterpart, which was
+  deliberately disabled at the source — this one has scheduleEnabled: true but
+  no actual cron data survived), and it had no <notification> block either.
+  Every flow in this repo is required to have a triggers: block (enforced by
+  tests/test_flow_structure.py), so the cron below ("0 */6 * * *", every 6
+  hours — a guess matching the job's own "short running" framing) is
+  fabricated, not sourced from Rundeck. disabled: true until a real schedule
+  is confirmed against live Rundeck.
+
+  No <nodefilters> block at all; since salt-run only runs on the Salt master,
+  this flow targets prodsalt as an assumption — confirm against the live
+  Rundeck job's resolved node list before treating this as validated.
+
+  Any flow that runs salt-run needs the salt-master ACL fix
+  (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the
+  command fails with a permissions error. That's namespace-files/shared/
+  ensure_salt_perms.sh, pulled in via
+  {{ read('ensure_salt_perms.sh', namespace='shared') }} instead of being
+  duplicated inline — shared with every other salt-run flow in this repo.
+
+tasks:
+  - id: run_backup
+    type: io.kestra.plugin.fs.ssh.Command
+    host: prodsalt.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/ensure_salt_perms.sh <<'ENSURE_SALT_PERMS_SCRIPT'
+        {{ read('ensure_salt_perms.sh', namespace='shared') }}
+        ENSURE_SALT_PERMS_SCRIPT
+        chmod +x /tmp/ensure_salt_perms.sh
+        /tmp/ensure_salt_perms.sh
+        rm -f /tmp/ensure_salt_perms.sh
+        sudo salt-run -l error backups.replica server=prodsalt-arm destination=s3 --out=json | jq -re 'select(.success == true)'
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 */6 * * *"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] SaltRun Rundeck backup failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

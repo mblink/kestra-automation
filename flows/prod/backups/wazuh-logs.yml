@@ -1,0 +1,70 @@
+id: wazuh-logs
+namespace: prod.backups
+
+description: |
+  Backup all wazuh logs. Migrated from Rundeck job Prod/Backups/Wazuh Logs
+  (ea73e810) — targets tags:monitor, which resolves to prodops02 AND
+  prodops03 (unlike staging's wazuh-logs.yml, which only has one tags:monitor
+  host — prod genuinely has two, so this uses the dynamic discovery + ForEach
+  pattern rather than a single hardcoded host). See bondlink-logs.yml for the
+  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
+  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
+
+  BROKEN EXPORT: the source job's <schedule> block was empty/missing entirely
+  in the export (scheduleEnabled: true, but no cron data survived — same class
+  of gap as saltrun-rundeck-backup.yml/disconnected-agent-check.yml). Every
+  flow in this repo is required to have a triggers: block (enforced by
+  tests/test_flow_structure.py), so the cron below ("0 6 * * *", once daily —
+  matching staging's own fabricated placeholder for the analogous job) is
+  fabricated, not sourced from Rundeck. disabled: true until a real schedule
+  is confirmed against live Rundeck.
+
+tasks:
+  - id: discover_monitor_hosts
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - instances.json
+    commands:
+      - |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=wazuh-docker" "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[].{Name: Tags[?Key=='Name']|[0].Value, PrivateDnsName: NetworkInterfaces[0].PrivateDnsName}" \
+          --output json > instances.json
+
+  - id: backup_per_host
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ fromJson(read(outputs.discover_monitor_hosts.outputFiles['instances.json'])) }}"
+    concurrencyLimit: 3
+    tasks:
+      - id: sync_logs
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ fromJson(taskrun.value).PrivateDnsName }}"
+        port: "2007"
+        username: bldeploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+        strictHostKeyChecking: "no"
+        commands:
+          - |
+            set -e
+            echo "Backing up wazuh logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
+            sudo /usr/local/bin/aws s3 sync /var/ossec/logs/alerts s3://bondlink-data-east/ossec-logs/prod/ --only-show-errors
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 * * *"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Wazuh Logs failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

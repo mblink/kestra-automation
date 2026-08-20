@@ -1,0 +1,45 @@
+id: analytics-updates
+namespace: prod.database
+
+description: |
+  Update the Analytics database from various sources — multiple ETL jobs
+  (Google Analytics ETL). Migrated from Rundeck job Prod/Database/SaltRun:
+  Analytics Updates (21c92c3d).
+
+  Uses `salt-call --local`, not salt-run — it runs standalone on the minion
+  itself with no master connection at all, so it doesn't touch the master's
+  mtime_map cache and doesn't need the ensure_salt_perms.sh ACL fix (matching
+  the source job, which never included it either). No <nodefilters> block at
+  all; targets prodsalt as an assumption since --local implies running
+  wherever the salt-call itself executes — confirm against the live Rundeck
+  job's resolved node list before treating this as validated.
+
+tasks:
+  - id: run_etl
+    type: io.kestra.plugin.fs.ssh.Command
+    host: prodsalt.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - sudo salt-call --local bondlink_analytics_main.run_all
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "29 7 * * *"
+    timezone: UTC
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Rundeck[prod_cron] Analytics Updates Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

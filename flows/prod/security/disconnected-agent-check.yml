@@ -1,0 +1,94 @@
+id: disconnected-agent-check
+namespace: prod.security
+
+description: |
+  Find disconnected wazuh agents and restart them. Migrated from Rundeck job
+  Prod/Security/Disconnected Agent Check (6e1284fa).
+
+  BROKEN EXPORT: the source job's <schedule> block was empty/missing entirely
+  (scheduleEnabled: true, but no cron data survived export — same class of gap
+  as saltrun-rundeck-backup.yml). Every flow in this repo is required to have
+  a triggers: block (enforced by tests/test_flow_structure.py), so the cron
+  below ("0 * * * *", hourly — a guess matching this being a health-check/
+  remediation job) is fabricated, not sourced from Rundeck. disabled: true
+  until a real schedule is confirmed against live Rundeck.
+
+  No <nodefilters> block at all; the script itself SSHes into prodops02 (as
+  bldeploy) to query wazuh-master/worker containers, so it must run from a
+  host with bldeploy's own SSH access already configured — targets prodsalt as
+  an assumption, matching every other nodefilter-less job in this repo —
+  confirm against the live Rundeck job's resolved node list before treating
+  this as validated.
+
+  wazuh/connect_agents.sh is inlined below (quoted heredoc) rather than pulled
+  from Namespace Files — it's only used by this one flow. Source of truth
+  remains rundeck-jobs' wazuh/connect_agents.sh.
+
+tasks:
+  - id: check_agents
+    type: io.kestra.plugin.fs.ssh.Command
+    host: prodsalt.bondlink.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/connect_agents.sh <<'CONNECT_AGENTS_SCRIPT'
+        #!/usr/bin/env bash
+        set -e
+        dockerImages='multi-node-wazuh.master-1 multi-node-wazuh.worker-1'
+        DISCONNECTED=$(for container in ${dockerImages}; do
+          sudo -u bldeploy ssh prodops02 "sudo docker exec $container /var/ossec/bin/agent_control -ln | grep ID | awk '{ print $4 }' | sed s/,//g"
+        done)
+
+        TRY_CONNECT=
+        checkInstanceState() {
+          aws ec2 describe-instances --filter "Name=tag:Name,Values=$1" --query "Reservations[*].Instances[*].State" | jq '.[][].Name' | sed 's/"//g'
+        }
+        if [ ! -z "${DISCONNECTED}" ]; then
+          for server in ${DISCONNECTED}; do
+            iState=$(checkInstanceState $server)
+            if [[ "$iState" = "running" && "${server}" != "prodsalt" ]]; then
+              TRY_CONNECT="${TRY_CONNECT}$server "
+            fi
+          done;
+          echo "TryConnect ${TRY_CONNECT}"
+          if [ ! -z "${TRY_CONNECT}" ]; then
+
+            SALT_DIS=$(echo "${TRY_CONNECT}" | sed 's/ /,/g' | sed 's/,$//')
+            echo "Disconnected agents: ${SALT_DIS}"
+            sudo salt -L "${SALT_DIS}" cmd.run "service wazuh-agent restart"
+            r=$?
+            echo "Salt result: $r"
+            exit $r
+          else
+            echo "Instances were in a hibernated state"
+            exit 0
+          fi
+        fi;
+        CONNECT_AGENTS_SCRIPT
+        chmod +x /tmp/connect_agents.sh
+        /tmp/connect_agents.sh
+        rm -f /tmp/connect_agents.sh
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 * * * *"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Failed to reconnect agent"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
