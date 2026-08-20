@@ -4,8 +4,15 @@ namespace: prod.security
 description: |
   Prune docker resources on drone build agents. Migrated from Rundeck job
   Prod/Security/Clean Drone Resources (c18e2825) — currently DISABLED in Rundeck
-  (executionEnabled: false), so no trigger is defined here either; run manually
-  from the Kestra UI to test, add a Schedule trigger only once re-enabled.
+  (executionEnabled: false); run manually from the Kestra UI to test.
+
+  PLACEHOLDER TRIGGER: every flow in this repo is required to have a triggers:
+  block (enforced by tests/test_flow_structure.py), but the source Rundeck job
+  never had a schedule to carry over (it was disabled before one was ever set).
+  The cron below ("0 3 * * 0", weekly Sunday 3am — a guess at a reasonable
+  maintenance-window cadence for a cleanup job) is fabricated, not sourced from
+  Rundeck — confirm/replace it with a real intended schedule before flipping
+  disabled to false.
 
   Original Rundeck node filter named proddroneagent01/02/03, but the current
   s3://bondlink-rundeck/prod.xml inventory only has proddroneagent04/05/06 —
@@ -79,6 +86,13 @@ tasks:
       - jeff@bondlink.com
     subject: "Rundeck[prod_cron] Clean Drone Resources Success"
     htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 3 * * 0"
+    timezone: UTC
+    disabled: true
 
 errors:
   - id: notify_failure

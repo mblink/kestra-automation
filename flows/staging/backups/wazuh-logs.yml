@@ -3,9 +3,15 @@ namespace: staging.backups
 
 description: |
   Backup all wazuh logs. Migrated from Rundeck job Staging/Backups/Wazuh Logs
-  (8a7df4c8) — DISABLED in Rundeck (scheduleEnabled: false), so no trigger is
-  defined here either. Targets tags:monitor, which resolves to stagingsalt only in
-  the fetched staging.xml inventory.
+  (8a7df4c8) — DISABLED in Rundeck (scheduleEnabled: false). Targets tags:monitor,
+  which resolves to stagingsalt only in the fetched staging.xml inventory.
+
+  PLACEHOLDER TRIGGER: every flow in this repo is required to have a triggers:
+  block (enforced by tests/test_flow_structure.py), but the source Rundeck job
+  never had a schedule to carry over (it was disabled before one was ever set).
+  The cron below ("0 6 * * *", once daily) is fabricated, not sourced from
+  Rundeck — confirm/replace it with a real intended schedule before flipping
+  disabled to false.
 
 tasks:
   - id: sync_logs
@@ -18,6 +24,13 @@ tasks:
     strictHostKeyChecking: "no"
     commands:
       - sudo /usr/local/bin/aws s3 sync /var/ossec/logs/alerts s3://bondlink-data-east/ossec-logs/staging/ --only-show-errors
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 * * *"
+    timezone: UTC
+    disabled: true
 
 errors:
   - id: notify_failure

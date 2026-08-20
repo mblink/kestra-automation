@@ -10,6 +10,13 @@ description: |
   NOT confirmed against Rundeck's live "next run" display, same caveat as every other
   weekly job in this repo.
 
+  Any flow that runs salt-run/salt-call needs the salt-master ACL fix
+  (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the
+  command fails with a permissions error. That's namespace-files/shared/
+  ensure_salt_perms.sh, pulled in via
+  {{ read('ensure_salt_perms.sh', namespace='shared') }} instead of being
+  duplicated inline — shared with every other salt-run/salt-call flow in this repo.
+
 tasks:
   - id: run_orchestration
     type: io.kestra.plugin.fs.ssh.Command
@@ -20,9 +27,14 @@ tasks:
     privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
     strictHostKeyChecking: "no"
     commands:
-      - if [ -z "$(sudo getfacl -p /var/cache/salt/minion/roots/mtime_map | grep user:salt:rw)" ]; then
-          sudo setfacl -m u:salt:rw -R /var/cache/salt/minion/roots/mtime_map
-        fi
+      - |
+        set -e
+        cat > /tmp/ensure_salt_perms.sh <<'ENSURE_SALT_PERMS_SCRIPT'
+        {{ read('ensure_salt_perms.sh', namespace='shared') }}
+        ENSURE_SALT_PERMS_SCRIPT
+        chmod +x /tmp/ensure_salt_perms.sh
+        /tmp/ensure_salt_perms.sh
+        rm -f /tmp/ensure_salt_perms.sh
       - sudo salt-run state.orchestrate suricata_update
 
 triggers:

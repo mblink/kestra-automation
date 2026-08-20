@@ -10,6 +10,20 @@ description: |
   targets prodsalt as an assumption — confirm against the live Rundeck job's resolved
   node list before treating this as validated.
 
+  Any flow that runs salt-run/salt-call needs the salt-master ACL fix
+  (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the
+  command fails with a permissions error. That's namespace-files/shared/
+  ensure_salt_perms.sh here, pulled in via
+  {{ read('ensure_salt_perms.sh', namespace='shared') }} the same way syslogs.sh
+  and bondlink_logs.py are shared — see prod.backups' bondlink-logs.yml for that
+  pattern's own notes. (A prior `namespaceFiles: include: [ensure_salt_perms.sh]`
+  on this task never actually got referenced from commands, and namespaceFiles on
+  an ssh.Command task only stages files into the Kestra worker's own local working
+  directory anyway — it doesn't upload them to the remote SSH host, so it couldn't
+  have worked here regardless. Removed in favor of the read()-into-heredoc pattern,
+  which does work since it's rendered into the command text before it's sent over
+  SSH.)
+
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
   the running image by inspecting the jar's bytecode, since Kestra's own docs page
@@ -33,9 +47,12 @@ tasks:
     commands:
       - |
         set -e
-        if [ -z "$(sudo getfacl -p /var/cache/salt/minion/roots/mtime_map | grep user:salt:rw)" ]; then
-          sudo setfacl -m u:salt:rw -R /var/cache/salt/minion/roots/mtime_map
-        fi
+        cat > /tmp/ensure_salt_perms.sh <<'ENSURE_SALT_PERMS_SCRIPT'
+        {{ read('ensure_salt_perms.sh', namespace='shared') }}
+        ENSURE_SALT_PERMS_SCRIPT
+        chmod +x /tmp/ensure_salt_perms.sh
+        /tmp/ensure_salt_perms.sh
+        rm -f /tmp/ensure_salt_perms.sh
         sudo salt-run backups.replica server=proddb03 destination=s3 --out=json | jq -re 'select(.success == true)'
 
 triggers:

@@ -34,12 +34,20 @@ feature — that mechanism was originally tried and dropped for simplicity, part
 because the Kestra CLI had no way to sync Namespace Files (only flows). That CLI gap
 is gone (`kestra namespace files update <namespace> <dir>` now exists, mirroring
 `flow namespace update`), so Namespace Files are now used for scripts that are
-genuinely shared **across environments** — two scripts so far, both under
-`namespace-files/shared/`: `syslogs.sh` (pulled into `staging/backups/
-syslog-backup.yml` and `prod/backups/syslog-backup.yml`) and `bondlink_logs.py`
-(pulled into `staging/backups/bondlink-logs.yml` and `prod/backups/
-bondlink-logs.yml` — its own `ENV = "prod" if "prod" in HOSTNAME else "staging"`
-logic is what made it identical between environments in the first place). Both via
+genuinely shared **across environments, or across more than one flow** — three
+scripts so far, all under `namespace-files/shared/`: `syslogs.sh` (pulled into
+`staging/backups/syslog-backup.yml` and `prod/backups/syslog-backup.yml`),
+`bondlink_logs.py` (pulled into `staging/backups/bondlink-logs.yml` and
+`prod/backups/bondlink-logs.yml` — its own
+`ENV = "prod" if "prod" in HOSTNAME else "staging"` logic is what made it
+identical between environments in the first place; it also needs `sudo` in front
+of its interpreter invocation and swallows `os.unlink` exceptions in its own
+cleanup step, both because it deletes files under `/var/log/bondlink`), and
+`ensure_salt_perms.sh` (the getfacl/setfacl ACL fix every salt-run/salt-call flow
+needs before its actual salt command — shared across all 4 such flows:
+`prod/backups/saltrun-database-backups.yml`, `prod/haproxy/
+saltrun-certificate-renewal.yml`, `staging/haproxy/certificate-renewal.yml`, and
+`staging/suricata/suricata-update.yml`). All via
 `{{ read('<file>', namespace='shared') }}` inside their heredocs, rather than being
 duplicated. Everything else stays inlined per-flow for now; apply this same
 `namespace-files/shared/` pattern to other scripts as they're found to be shared
@@ -83,7 +91,16 @@ kestra flow namespace update <namespace> <dir> --server <url> --user=USER:PASS
 exact host-side script for this (the `sync_git.sh` equivalent) is still to be built,
 on the salt side, not here.
 
-There's no equivalent CLI for Namespace Files, which is one more reason inlining won.
+(This paragraph originally said there was no CLI equivalent for Namespace Files —
+that's no longer true, see the Namespace Files section above.)
+
+## Tests
+
+`tests/` (pytest, see `README.md` for setup) runs static structural/policy checks
+over every `flows/**/*.yml` — not real flow execution. Covers baseline sanity
+(required keys, id/namespace match file path, ssh.Command connection fields,
+every flow has non-empty `errors:`/`triggers:` blocks) plus the salt-perms rule
+above. Wired into CI via `.github/workflows/pytest.yml`, runs on every PR.
 
 ## Known gaps, carried forward from the source Rundeck export (not fixed, by design)
 
