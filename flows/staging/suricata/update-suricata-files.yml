@@ -37,7 +37,7 @@ errors:
     from: kestra@bondlink.com
     to:
       - jeff@bondlink.com
-    subject: "Rundeck[staging_cron] Update Suricata Files failed"
+    subject: "Kestra[staging_cron] Update Suricata Files failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}

@@ -61,7 +61,7 @@ errors:
     from: kestra@bondlink.com
     to:
       - jeff@bondlink.com
-    subject: "Rundeck[prod_cron] SaltRun Rundeck backup failed"
+    subject: "Kestra[prod_cron] SaltRun Rundeck backup failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}

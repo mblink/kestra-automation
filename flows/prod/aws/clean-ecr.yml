@@ -236,7 +236,7 @@ errors:
     to:
       - jeff@bondlink.com
       - matt@bondlink.com
-    subject: "Rundeck[prod_cron] Clean ECR failed"
+    subject: "Kestra[prod_cron] Clean ECR failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}

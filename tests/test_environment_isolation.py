@@ -1,7 +1,7 @@
 """Catches copy/paste errors between environments: a prod flow's errors: block
 should never mention staging, and a staging flow's errors: block should never
 mention prod. This is exactly the bug clean-drone-resources.yml (flows/prod/
-security/) had - a notify_success subject of "Rundeck[staging_cron] Clean Drone
+security/) had - a notify_success subject of "Kestra[staging_cron] Clean Drone
 Resources Success" copy-pasted from a staging flow.
 
 Scoped specifically to the errors: block (not the whole file) since flows

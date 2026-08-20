@@ -58,7 +58,7 @@ tasks:
     from: kestra@bondlink.com
     to:
       - jeff@bondlink.com
-    subject: "Rundeck[prod_cron] Certification Renewal Success"
+    subject: "Kestra[prod_cron] Certification Renewal Success"
     htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded."
 
 triggers:
@@ -74,7 +74,7 @@ errors:
     from: kestra@bondlink.com
     to:
       - jeff@bondlink.com
-    subject: "Rundeck[prod_cron] Certification Renewal Failed"
+    subject: "Kestra[prod_cron] Certification Renewal Failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
       Failed task: {{ tasksWithState('FAILED')[0].id }}
