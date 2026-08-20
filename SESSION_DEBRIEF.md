@@ -108,6 +108,21 @@ exercised. `tests/test_known_pitfalls.py::test_ssh_command_scripts_use_full_path
 this recurring — deliberately exempting `io.kestra.plugin.aws.cli.AwsCLI` tasks,
 which correctly use bare `aws` inside their own dedicated container.
 
+**A third, unrelated bug on the same flow, found after fixing the first two**:
+`clean-corp-preview-s3.yml` still failed with `SSH command fails with exit
+status 127` after both fixes above. `set -x` tracing showed it died on the
+very first `wait -n` call, before any background job had started — bash's own
+manual says `wait -n` with zero active background jobs returns exit 127. The
+script computes `parallelJobs=$((cpus / 2))` from `nproc --all`, and
+`prodsalt-arm` (where this flow runs) is an `x8g.medium` — 1 vCPU — so integer
+division makes `parallelJobs` 0. This is genuinely host-CPU-count-dependent:
+it never surfaced under Rundeck (presumably a multi-core agent) and the script
+"ran to completion" when the user pulled it to their own (multi-core) machine.
+Fixed by flooring `parallelJobs` at 1 in the Namespace File — a deliberate
+divergence from rundeck-jobs' source, noted in the flow's description. Not
+generalized into a static test: too content-specific (the bug is about a
+particular script's arithmetic, not a pattern like the others above).
+
 Production sync (see "How flows actually get onto the production Kestra instance"
 below) now runs a `namespace files update` call per `namespace-files/<namespace>/`
 directory alongside its existing per-namespace `flow namespace update` loop — see

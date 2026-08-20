@@ -9,6 +9,9 @@ fi
 
 cpus="$(nproc --all)"
 parallelJobs=$((cpus / 2))
+if [ "$parallelJobs" -lt 1 ]; then
+  parallelJobs=1
+fi
 
 declare -A buckets
 buckets=(["bondlink-corporate"]="production" ["bondlink-corporate-dev"]="staging")

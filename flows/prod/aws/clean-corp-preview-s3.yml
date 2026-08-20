@@ -19,8 +19,20 @@ description: |
   `ParserException: Unclosed comment` at execution time. Escaping every
   `${#...}` occurrence is fragile and easy to reintroduce; read()'s return
   value is never re-parsed for template syntax, so this sidesteps the whole
-  class of bug. Source of truth remains rundeck-jobs' aws/clean_corp_preview.sh.
-  Source job called this with no args (live mode, not --dry-run).
+  class of bug. Source job called this with no args (live mode, not --dry-run).
+
+  DELIBERATE DIVERGENCE from rundeck-jobs' aws/clean_corp_preview.sh: also
+  failed live, separately from the Pebble bug above, with
+  "SSH command fails with exit status 127". `set -x` tracing showed it died on
+  the very first `wait -n` call, before any background job had even started —
+  that only happens if `parallelJobs` (`$((cpus / 2))`, cpus from `nproc --all`)
+  computes to 0, and per bash's own manual, `wait -n` with zero active
+  background jobs returns exit status 127. prodsalt-arm is an x8g.medium — 1
+  vCPU — so `nproc --all` returns 1 and integer division makes `parallelJobs`
+  0. This never surfaced under Rundeck (presumably run on a multi-core agent)
+  and the script "ran to completion" when pulled to a local (multi-core)
+  machine — it's genuinely host-CPU-count-dependent. Fixed by flooring
+  parallelJobs at 1 in the Namespace File; not fixed upstream in rundeck-jobs.
 
 tasks:
   - id: clean_corp_preview
