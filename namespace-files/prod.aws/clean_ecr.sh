@@ -15,7 +15,7 @@ regions=(us-east-1 us-east-2)
 
 declare -a appRepos
 declare -a droneRepos
-allRepos=$(aws ecr describe-repositories \
+allRepos=$(/usr/local/bin/aws ecr describe-repositories \
             --query "repositories[?starts_with(repositoryName, 'drone-') || starts_with(repositoryName, 'bondlink-')].repositoryName" --output text)
 for repo in $allRepos; do
   if [[ "$repo" == drone-* ]]; then
