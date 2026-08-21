@@ -1,6 +1,5 @@
 #!/bin/bash
 START_DAILY=$(date +'%Y-%m-%d')
-END_DAILY=$(date -d "${START_DAILY} - 365 days" +'%Y-%m-%d')
 START_WEEKLY=$(date -d "${START_DAILY} - 366 days" +'%Y-%m-%d')
 END_WEEKLY=$(date -d "${START_WEEKLY} - 1 years" +'%Y-%m-%d')
 START_MONTHLY=$(date -d "${END_WEEKLY} + 1 day" +'%Y-%m-%d')
@@ -10,7 +9,6 @@ TO_DATE_REGEX="s:([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2
 
 # bondlink-us-east-2 only has keys starting in 2-20-2024, a year from then, assuming nothing changes is when that key will need to be considered.
 # syncing them to a single namespace seems stupid.
-TOP_LEVEL_KEYS=("bondlink-us-east-2" "bondlink-us-west-2")
 TOP_LEVEL="s3://bondlink-data/backups/mysql/bondlink-us-west-2"
 MATCH_DAY="Sunday"
 STOP_DATE="${END_WEEKLY}"
@@ -21,8 +19,8 @@ log() { echo -e "[$(date +"%Y-%m-%dT%H:%M:%S")] $1"; }
 
 weekly=("${START_WEEKLY}" "${END_WEEKLY}")
 monthly=("${START_MONTHLY}" "${END_MONTHLY}")
-log "Weekly ${weekly[@]}"
-log "Monthly ${monthly[@]}"
+log "Weekly ${weekly[*]}"
+log "Monthly ${monthly[*]}"
 
 SLEEP_TIME=1
 set -e
@@ -42,7 +40,7 @@ keyToDateS() { echo "$1" | sed 's:\.sql.*$::' |  sed -E "${TO_DATE_REGEX}"; }
 maybeDeleteBackup() {
   local checkType=$1; shift;
   local deleteKeys=("$@")
-  if [ -z "${deleteKeys}" ]; then
+  if [ "${#deleteKeys[@]}" -eq 0 ]; then
     log "No keys to delete DRYRUN: ${DRYRUN}, StopDate: ${STOP_DATE} checkType: ${checkType}"
   else
     local totalKeys="${#deleteKeys[@]}"

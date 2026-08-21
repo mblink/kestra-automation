@@ -1,5 +1,5 @@
 """Baseline structural sanity checks for every flow YAML file in flows/."""
-from conftest import REPO_ROOT, find_tasks_of_type
+from tests.unit.conftest import REPO_ROOT, find_tasks_of_type
 
 REQUIRED_TOP_LEVEL_KEYS = ("id", "namespace", "tasks")
 REQUIRED_SSH_COMMAND_FIELDS = {

@@ -48,12 +48,12 @@ for bucket in "${!buckets[@]}"; do
   log "***************** Checking corp preview builds in $s3Prefix"
 
   # List all matching keys and read them into an array
-  readarray -t keys <<< $(
+  readarray -t keys <<< "$(
     /usr/local/bin/aws s3 ls "$s3Prefix/" \
       | grep -E '\s+preview-[0-9]+/' \
       | awk '{print $2}' \
       | sed -E 's@/$@@'
-  )
+  )"
 
   keyCount=${#keys[@]}
 
@@ -61,7 +61,7 @@ for bucket in "${!buckets[@]}"; do
   # https://stackoverflow.com/a/53870978/2163024
   numJobs="\j"
 
-  for idx in ${!keys[@]}; do
+  for idx in "${!keys[@]}"; do
     # If the number of jobs currently running is >= the number we want to run in parallel, wait until one finishes
     # @P tells bash to expand numJobs, see the stack overflow link above
     while (( ${numJobs@P} >= parallelJobs )); do

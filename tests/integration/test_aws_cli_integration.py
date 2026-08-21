@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO_ROOT, find_tasks_of_type
+from tests.unit.conftest import REPO_ROOT, find_tasks_of_type
 
 CACHE_DIR = REPO_ROOT / "tests" / "integration_cache"
 
@@ -45,6 +45,7 @@ def _run_aws_cli_task(task):
             cwd=tmpdir,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"AwsCLI task '{task.get('id')}' failed (exit {result.returncode}): "

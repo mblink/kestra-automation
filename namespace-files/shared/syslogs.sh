@@ -3,7 +3,7 @@
 FOLDER=$(date +'%Y-%m' -d "yesterday")
 FILE_MATCH=$(date +'%Y%m%d' -d "yesterday")
 
-cd /var/log/
+cd /var/log/ || exit 1
 if [ -z "$(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::')" ]; then
   echo "No files found for ${FILE_MATCH}"
   exit 0

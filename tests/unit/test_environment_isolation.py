@@ -10,7 +10,7 @@ description explaining a pattern shared with the flow's staging/prod
 counterpart, or SESSION_DEBRIEF.md links. The errors: block is pure boilerplate
 per flow, so any such reference there is always a mistake.
 """
-from conftest import REPO_ROOT, iter_strings
+from tests.unit.conftest import REPO_ROOT, iter_strings
 
 FORBIDDEN_BY_TOP_DIR = {
     "prod": "staging",

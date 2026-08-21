@@ -1,0 +1,88 @@
+# Woodpecker CI (arm64). Woodpecker treats a single `.woodpecker.yml` as ONE workflow, so
+# every step lives here, pinned to arm64 agents via `labels` and running the arch-suffixed
+# CI image (drone-kestra:latest-arm64). Unlike /src/salt's pipeline this repo has no Salt
+# state to render and no git-crypt secrets to unlock -- it's a plain pytest + lint repo, so
+# the pipeline is intentionally small: lint, unit tests, and a failure notifier.
+#
+# THE SUBSTITUTION MODEL (see the `woodpecker` skill) -- this is where pipelines break.
+# Woodpecker runs envsubst over the RAW FILE TEXT, comments included, BEFORE the YAML is
+# parsed, and expands only the brace form; a bare $VAR survives to runtime and is expanded
+# by the step shell. Two consequences are encoded below:
+#   1. Never write a literal dollar-then-brace sequence anywhere in this file, comments
+#      included. A non-identifier inside one fails envsubst and aborts the ENTIRE config
+#      at compile time (no steps run; the error shows only under /errors).
+#   2. Globs need explicit quoting. A bare $CI_PIPELINE_NUMBER_ followed by a star reads
+#      the underscore as part of the variable name (underscore is a valid identifier
+#      character), silently matching nothing -- so any such value would need to be quoted
+#      with the underscore left outside the quotes (not needed here -- no cache volume).
+#
+# HUMAN prerequisites before enabling this pipeline:
+#   - Mark the repo TRUSTED in Woodpecker if any step needs it (none currently do).
+#   - Register an arm64 agent with label  platform=linux/arm64.
+#   - 668874212870.dkr.ecr.us-east-1.amazonaws.com/drone-kestra:latest-arm64 must exist in
+#     ECR (built from /src/oddjob/drone/Dockerfile.kestra). Agent registry auth comes from
+#     the server's WOODPECKER_DOCKER_CONFIG plus the ecr-auth sidecar, so no pull-images
+#     step and no docker.sock mount are needed.
+
+when:
+  - event: [push, pull_request, manual]
+    branch: [main]
+
+labels:
+  platform: linux/arm64
+
+workspace:
+  base: /src
+  path: kestra-automation
+
+variables:
+  - &agent-image 668874212870.dkr.ecr.us-east-1.amazonaws.com/drone-kestra:latest-arm64
+
+steps:
+  - name: lint
+    image: *agent-image
+    pull: true
+    commands:
+      - pip install --root-user-action=ignore -r requirements-test.txt
+      - bash ci/lint/lint.sh all
+
+  - name: run-unit-tests
+    image: *agent-image
+    pull: true
+    commands:
+      - pip install --root-user-action=ignore -r requirements-test.txt
+      - pytest -v tests/unit
+
+  # Woodpecker exposes no current-pipeline status env, so this notifies on failure only.
+  # By default Woodpecker skips remaining steps once one fails, so this step needs its own
+  # `when.status: [failure]` to still run when `lint` or `run-unit-tests` fails (same
+  # mechanism /src/salt's .woodpecker.yml uses for its notify step). msmtp instead of
+  # drillster/drone-email: that plugin is amd64-only and can't run on this arm64 agent.
+  - name: notify
+    image: alpine:3
+    environment:
+      SMTP_HOST: prodsalt-arm.bondlink.vpc
+      SMTP_PORT: "25"
+      MAIL_FROM: bldeploy@bondlink.com
+    commands:
+      - apk add --no-cache msmtp
+      - |
+        to="$CI_COMMIT_AUTHOR_EMAIL"
+        [ -n "$to" ] || to="$MAIL_FROM"
+        {
+          printf 'From: %s\n' "$MAIL_FROM"
+          printf 'To: %s\n' "$to"
+          printf 'Subject: [woodpecker] FAILED %s build #%s (%s)\n' \
+            "$CI_REPO" "$CI_PIPELINE_NUMBER" "$CI_COMMIT_BRANCH"
+          printf '\n'
+          printf 'Repository: %s\n' "$CI_REPO"
+          printf 'Branch:     %s\n' "$CI_COMMIT_BRANCH"
+          printf 'Commit:     %s\n' "$CI_COMMIT_SHA"
+          printf 'Author:     %s\n' "$CI_COMMIT_AUTHOR"
+          printf 'Event:      %s\n' "$CI_PIPELINE_EVENT"
+          printf 'Build:      %s\n' "$CI_PIPELINE_URL"
+          printf '\n%s\n' "$CI_COMMIT_MESSAGE"
+        } | msmtp --host="$SMTP_HOST" --port="$SMTP_PORT" --from="$MAIL_FROM" \
+              --auth=off --tls=off -- "$to"
+    when:
+      - status: [failure]

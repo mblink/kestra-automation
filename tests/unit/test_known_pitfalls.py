@@ -8,7 +8,7 @@ import re
 
 import pytest
 
-from conftest import REPO_ROOT, find_tasks_of_type, iter_strings, walk
+from tests.unit.conftest import REPO_ROOT, find_tasks_of_type, iter_strings, walk
 
 BARE_TASKRUN_FIELD_ACCESS = re.compile(r"taskrun\.value\.[A-Za-z_]")
 BARE_PYTHON_INVOCATION = re.compile(r"(?<!/)\bpython3?\s+/tmp/\S+\.py\b")
