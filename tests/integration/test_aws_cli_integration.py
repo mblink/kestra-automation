@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO_ROOT, find_tasks_of_type
+from tests.unit.conftest import REPO_ROOT, find_tasks_of_type
 
 CACHE_DIR = REPO_ROOT / "tests" / "integration_cache"
 

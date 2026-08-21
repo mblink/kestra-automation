@@ -8,23 +8,23 @@ Unit Tests feature, which this OSS deployment doesn't have).
 
 ```
 python3 -m venv .venv
-./.venv/bin/pip install -r requirements-dev.txt
+./.venv/bin/pip install -r requirements-test.txt
 ./.venv/bin/pytest
 ```
 
-`tests/test_flow_structure.py` covers baseline sanity: required keys, id/namespace
+`tests/unit/test_flow_structure.py` covers baseline sanity: required keys, id/namespace
 match their file path, ssh.Command tasks have all required connection fields, and
 every flow has non-empty `errors:` and `triggers:` blocks — a flow with no known
 schedule (disabled at the Rundeck source) still needs a `triggers:` block, just
 with a `Schedule` trigger carrying `disabled: true` rather than omitting the block
-entirely (see `wazuh-logs.yml`/`clean-drone-resources.yml`). `tests/test_salt_perms.py`
+entirely (see `wazuh-logs.yml`/`clean-drone-resources.yml`). `tests/unit/test_salt_perms.py`
 enforces one specific rule: any flow that runs salt-run/salt-call must call
 `namespace-files/shared/ensure_salt_perms.sh` (via
 `{{ read('ensure_salt_perms.sh', namespace='shared') }}`) before doing so — see
 SESSION_DEBRIEF.md for the incident (a flow shipped without this and failed on a
-salt-master ACL permissions error) that prompted the rule. `tests/test_environment_isolation.py`
+salt-master ACL permissions error) that prompted the rule. `tests/unit/test_environment_isolation.py`
 catches copy/paste between environments: a prod flow's `errors:` block can't
-mention staging and vice versa. `tests/test_known_pitfalls.py` is a grab-bag of
+mention staging and vice versa. `tests/unit/test_known_pitfalls.py` is a grab-bag of
 regression tests for specific bugs hit during the initial rollout (bare
 `taskrun.value.Field` instead of `fromJson(taskrun.value).Field`, bare `python3`
 instead of the salt onedir's interpreter, `namespaceFiles:` on an ssh.Command
@@ -36,11 +36,14 @@ Kestra's non-interactive SSH session doesn't have `/usr/local/bin` on its
 PATH) — each one was a real bug in a committed flow at some point, not a
 hypothetical.
 
-Runs on every PR via `.github/workflows/pytest.yml`.
+Runs on every PR via `.github/workflows/pytest.yml` and, as of this change, as
+the `run-unit-tests` step in `.woodpecker.yml`. A separate `lint` step
+(`ci/lint/lint.sh all`) runs `ruff` over the repo's Python and `shellcheck`
+over the `namespace-files/` shell scripts.
 
 ### Integration test (opt-in, not gated)
 
-`tests/test_aws_cli_integration.py` actually executes every
+`tests/integration/test_aws_cli_integration.py` actually executes every
 `io.kestra.plugin.aws.cli.AwsCLI` task's `aws` command for real, against
 whatever AWS credentials/profile are active in your shell, and asserts the
 result isn't empty. Not run by default and not wired into CI (no AWS

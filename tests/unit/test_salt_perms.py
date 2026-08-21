@@ -11,7 +11,7 @@ standalone on the minion; a bare `salt <target> <module>` dispatches from the
 master without going through the orchestrate/state-run path that needs it), and
 none of the Rundeck-source jobs using either pattern ever included the ACL fix.
 """
-from conftest import find_tasks_of_type
+from tests.unit.conftest import find_tasks_of_type
 
 SALT_MARKER = "salt-run"
 PERMS_MARKER = "ensure_salt_perms.sh"

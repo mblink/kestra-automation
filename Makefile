@@ -5,15 +5,18 @@ VENV := .venv
 PYTEST := $(shell [ -x $(VENV)/bin/pytest ] && echo $(VENV)/bin/pytest || echo pytest)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup test test-integration generate-error-block
+.PHONY: help setup lint test test-integration generate-error-block
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Create the test venv and install requirements-dev.txt (idempotent)
+setup: ## Create the test venv and install requirements-test.txt (idempotent)
 	python3 -m venv $(VENV)
-	$(VENV)/bin/pip install -q -r requirements-dev.txt
+	$(VENV)/bin/pip install -q -r requirements-test.txt
+
+lint: ## Run the lint gate (ruff + shellcheck)
+	bash ci/lint/lint.sh all
 
 test: ## Run the flow YAML test suite (static checks only, no AWS calls)
 	$(PYTEST) -v
