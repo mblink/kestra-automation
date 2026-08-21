@@ -98,14 +98,41 @@ deleteUntaggedImages() {
   for repo in "${repos[@]}"; do
     log "***************** Checking untagged images in ECR repo $repo in region $region"
 
-    # Delete all images that don't have tags
-    untaggedImageDigests="$(
+    allImages="$(
       /usr/local/bin/aws ecr describe-images \
         --region "$region" \
         --repository-name "$repo" \
-        --filter 'tagStatus=UNTAGGED' \
         --output json \
-        | jq -c '.imageDetails | map({ "imageDigest": .imageDigest })'
+        | jq -c '.imageDetails'
+    )"
+
+    # Multi-arch images push a manifest list (or OCI index) plus one untagged child
+    # manifest per platform. ECR refuses to delete a child directly while its parent
+    # list still exists (fails with "ImageReferencedByManifestList"), so resolve each
+    # list's children here and exclude them below -- they get cleaned up on their own
+    # once the list itself is deleted by tag, in deleteBranchImages/deleteAllButLatestImage.
+    listDigests="$(jq -r '.[] | select(.imageManifestMediaType | test("manifest\\.list|image\\.index")) | .imageDigest' <<< "$allImages")"
+
+    referencedDigests='[]'
+    for listDigest in $listDigests; do
+      manifest="$(
+        /usr/local/bin/aws ecr batch-get-image \
+          --region "$region" \
+          --repository-name "$repo" \
+          --image-ids imageDigest="$listDigest" \
+          --query 'images[0].imageManifest' \
+          --output text
+      )"
+      referencedDigests="$(jq -c --argjson existing "$referencedDigests" '$existing + [.manifests[].digest]' <<< "$manifest")"
+    done
+
+    # Delete all images that don't have tags and aren't a referenced manifest-list child
+    untaggedImageDigests="$(
+      jq -c --argjson referenced "$referencedDigests" '
+        map(select((.imageTags // []) == []))
+          | map(select(.imageDigest as $d | ($referenced | index($d)) | not))
+          | map({ "imageDigest": .imageDigest })
+      ' <<< "$allImages"
     )"
 
     deleteInBatches "$region" "$repo" "$untaggedImageDigests"
