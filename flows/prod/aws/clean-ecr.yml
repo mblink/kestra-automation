@@ -195,7 +195,7 @@ tasks:
             imagesToDelete="$(
               jq -c '
                 # Filter out images with latest tag
-                map(select((.imageTags // []) | map(select(. == "latest")) | any | not))
+                map(select((.imageTags // []) | map(select(. | IN("latest", "latest-arm64"))) | any | not))
                   # Map to just the image tags and flatten the array
                   | map(.imageTags)
                   | flatten
