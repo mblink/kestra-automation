@@ -12,7 +12,7 @@ log() {
 }
 
 regions=(us-east-1 us-east-2)
-declare -a allRepos
+
 declare -a appRepos
 declare -a droneRepos
 allRepos=$(aws ecr describe-repositories \
@@ -135,7 +135,7 @@ deleteBranchImages() {
             # Sort images by their most recent tag
             | sort_by(.imageTags | sort | .[-1])
             # Drop the last N images
-            | .[:-'$(imagesToKeep "$repo" "$branch")']
+            | .[:-'"$(imagesToKeep \"$repo\" \"$branch\")"']
             # Map to just the image tags and flatten the array
             | map(.imageTags)
             | flatten
