@@ -1,0 +1,198 @@
+id: provision-server
+namespace: shared.infra
+
+description: |
+  Shared core of the terraform+salt provisioning PoC — decouples "make the
+  box exist" (tofu apply) from "make the box correctly configured" (salt
+  highstate), so a config change can be applied via shared.salt/highstate.yml
+  on demand without depending on user_data being rebuilt or correct.
+
+  Generalized from an earlier single-environment version of this flow (one
+  worker, hosted in prod, scoped to manage staging only) into a real shared
+  flow once a second, per-environment worker existed: staging.infra/
+  provision-server.yml and prod.infra/provision-server.yml are now thin
+  wrapper flows that Subflow into this one with their own environment's
+  values — each worker manages only its own environment's resources (prod's
+  prodkestra01 manages prod/kestra, staging's stagingkestra01 manages
+  staging/dev-subnet), not the earlier prod-hosted-but-staging-scoped
+  arrangement. Neither targets its environment's live webservers group —
+  both prod/kestra and staging/dev-subnet are dedicated, non-production-
+  traffic groups built so this PoC's actual apply/highstate testing never
+  touches a live, user-facing server group.
+
+  Deliberately a shared FLOW, not a namespace-files/shared/ script, even
+  though this repo's convention for cross-environment sharing has otherwise
+  been "extract the script, duplicate the flow" (see ensure_salt_perms.sh's
+  4 callers). That pattern doesn't fit here: read()'s return value is never
+  re-parsed for Pebble template syntax, and the tofu commands below are
+  saturated with {{ inputs.* }}/{{ secret(...) }}/{% if %} — moving them into
+  a namespace-files/shared/*.sh script would leave all of that as inert
+  literal text. A Subflow-called flow's own task definitions render inputs/
+  secrets/conditionals normally, which is why this shape was used instead.
+
+  The highstate step (task salt_highstate) SSHes to the target server itself
+  and runs `salt-call --local`, NOT a master-dispatched `salt '<target>'
+  state.apply` — see shared.salt/highstate.yml's description for why
+  (branch-independence from whatever's checked out on the master).
+
+  No `concurrency:` block here on purpose — this flow's own flow-scoped
+  concurrency limit would serialize every caller against every other caller
+  regardless of environment, which is wrong (staging and prod are different
+  state files run from different workers). Each per-environment wrapper flow
+  carries its own `concurrency: {limit: 1, behavior: FAIL}` instead.
+
+  UNRESOLVED PREREQUISITES — do not run this for real until these are in
+  place, confirm with whoever owns /src/infrastructure first:
+    - The runner host needs /src/infrastructure cloned, git-crypt unlocked,
+      and the `tofu`/`aws` binaries installed and resolvable in a
+      non-interactive SSH session's PATH (this repo's ssh.Command tasks
+      already need /usr/local/bin prepended for `aws` for the same PATH
+      reason — see test_known_pitfalls.py's
+      test_ssh_command_scripts_use_full_path_for_aws_cli — tofu_plan/
+      tofu_apply below do the same prepend defensively since tofu's actual
+      install location isn't confirmed yet).
+    - TF_AWS_CREATION_KEY / TF_USER_SSH_KEY secrets referenced below do not
+      exist yet in Kestra — they need real values (not CI's planning
+      placeholder) for TF_VAR_aws_creation_key/TF_VAR_user_ssh_key.
+    - The AWS profile named by aws_profile (every server-group directory's
+      linked_files/provider.tf hardcodes `profile = "east"`/`"default"` per
+      environment, not ambient/instance-role credentials) needs to exist in
+      the runner host's ~/.aws/credentials, backed by an identity that's
+      both automatable and actually apply-capable — see
+      global/iam/roles_kestra_worker.tf / roles_staging_kestra_worker.tf in
+      /src/infrastructure for the scoped role each worker should use.
+    - Neither staging/dev-subnet nor prod/kestra has a real state lock
+      (no DynamoDB table repo-wide since commit e0f317c5; use_lockfile is
+      broken elsewhere in this repo due to bucket policy) — each wrapper
+      flow's own `concurrency:` block is the only thing preventing two
+      concurrent applies against the same state key.
+    - resource_address (for -replace) has no confirmed real value anywhere
+      in /src/infrastructure — confirm the exact address with `tofu state
+      list` in the target tf_dir before trusting it — left empty by default
+      (plain apply, no forced replace).
+
+  This repo's own .claude/settings.json hard-denies tofu apply/destroy/state
+  rm/force-unlock for the Claude Code agent — a signal that apply is meant to
+  be human-gated here. The review_plan Pause task preserves that: nothing
+  applies until a human reviews the tofu_plan task's log output and resumes
+  the execution from the Kestra UI.
+
+inputs:
+  - id: environment
+    type: STRING
+    description: "staging or prod — used only for notification text, not logic"
+  - id: tf_dir
+    type: STRING
+    description: Directory under /src/infrastructure to run tofu in, e.g. staging/dev-subnet or prod/kestra
+  - id: aws_profile
+    type: STRING
+    description: AWS CLI profile name the target tf_dir's provider.tf hardcodes (east for staging, default for prod)
+  - id: runner_host
+    type: STRING
+    description: The per-environment Kestra worker to SSH into and run tofu on, e.g. prodkestra01.bondlink.vpc or stagingkestra01.staging.vpc
+  - id: server_name
+    type: STRING
+  - id: resource_address
+    type: STRING
+    defaults: ""
+    description: Optional -replace target, e.g. module.servers.module.servers.aws_instance.server["<server_name>"]. Leave empty for a plain apply.
+  - id: target_ssh_host
+    type: STRING
+    description: The provisioned server's own SSH hostname, e.g. stagingweb03.staging.vpc or prodweb01.bondlink.vpc
+
+tasks:
+  - id: tofu_plan
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.runner_host }}"
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        export PATH="/usr/local/bin:$PATH"
+        export AWS_PROFILE={{ inputs.aws_profile }}
+        export TF_VAR_aws_creation_key="{{ secret('TF_AWS_CREATION_KEY') }}"
+        export TF_VAR_user_ssh_key="{{ secret('TF_USER_SSH_KEY') }}"
+        cd /src/infrastructure/{{ inputs.tf_dir }}
+        git pull
+        tofu init -input=false
+        tofu plan -input=false {% if inputs.resource_address %}-replace="{{ inputs.resource_address }}"{% endif %} -out=/tmp/tfplan-{{ inputs.server_name }}
+
+  - id: review_plan
+    type: io.kestra.plugin.core.flow.Pause
+    description: Review tofu_plan's log output in the Kestra UI before resuming — nothing applies until this execution is manually resumed.
+
+  - id: tofu_apply
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.runner_host }}"
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        export PATH="/usr/local/bin:$PATH"
+        export AWS_PROFILE={{ inputs.aws_profile }}
+        export TF_VAR_aws_creation_key="{{ secret('TF_AWS_CREATION_KEY') }}"
+        export TF_VAR_user_ssh_key="{{ secret('TF_USER_SSH_KEY') }}"
+        cd /src/infrastructure/{{ inputs.tf_dir }}
+        tofu apply -input=false /tmp/tfplan-{{ inputs.server_name }}
+        rm -f /tmp/tfplan-{{ inputs.server_name }}
+
+  - id: wait_for_ssh
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.target_ssh_host }}"
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    retry:
+      type: constant
+      interval: PT15S
+      maxAttempt: 20
+    commands:
+      - echo "{{ inputs.target_ssh_host }} is reachable"
+
+  - id: salt_highstate
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: shared.salt
+    flowId: highstate
+    wait: true
+    transmitFailed: true
+    inputs:
+      target_hosts:
+        - "{{ inputs.target_ssh_host }}"
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Provision Server Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded for {{ inputs.environment }}/{{ inputs.server_name }} ({{ inputs.target_ssh_host }})."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * 0"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Provision Server Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

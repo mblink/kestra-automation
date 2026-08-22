@@ -1,0 +1,68 @@
+id: provision-server
+namespace: staging.infra
+
+description: |
+  Thin, staging-scoped wrapper around shared.infra/provision-server.yml —
+  see that flow's description for the actual tofu+salt logic and its list of
+  unresolved prerequisites (none of which are resolved here either).
+
+  Runs on stagingkestra01 (config/servers_staging.yaml ops.servers.
+  stagingkestra01, /src/infrastructure) — staging's own dedicated worker,
+  scoped via global/iam/roles_staging_kestra_worker.tf to only
+  staging/dev-subnet's resources (ai-builds, develop-arm). Not
+  staging/webservers: dev-subnet is a dedicated, non-production-traffic
+  group, so this PoC's actual apply/highstate testing doesn't touch a live,
+  user-facing server group. Not prodkestra01 either: each environment has
+  its own worker managing its own resources, rather than one prod-hosted
+  node reaching across into staging (the original single-worker PoC).
+
+concurrency:
+  limit: 1
+  behavior: FAIL
+
+inputs:
+  - id: server_name
+    type: STRING
+    defaults: "ai-builds"
+  - id: resource_address
+    type: STRING
+    defaults: ""
+    description: Optional -replace target, e.g. module.servers.module.servers.aws_instance.server["ai-builds"]. Leave empty for a plain apply.
+  - id: target_ssh_host
+    type: STRING
+    defaults: "ai-builds.staging.vpc"
+
+tasks:
+  - id: provision
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: shared.infra
+    flowId: provision-server
+    wait: true
+    transmitFailed: true
+    inputs:
+      environment: staging
+      tf_dir: staging/dev-subnet
+      aws_profile: east
+      runner_host: stagingkestra01.staging.vpc
+      server_name: "{{ inputs.server_name }}"
+      resource_address: "{{ inputs.resource_address }}"
+      target_ssh_host: "{{ inputs.target_ssh_host }}"
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * 0"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Provision Server Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

@@ -1,0 +1,95 @@
+id: exec
+namespace: shared.salt
+
+description: |
+  Reusable arbitrary salt execution-module runner — the generic sibling of
+  shared.salt/highstate.yml. highstate.yml is specifically for `state.apply`;
+  this is for one-off `salt-call --local <function> <args>` calls, e.g. the
+  motivating example: create a volume on ai-builds, run `salt-call --local
+  mariadb_backup.restore_last_backup`, remove the volume — all via SSH +
+  masterless salt-call, no salt-master dispatch needed.
+
+  Same masterless reasoning as highstate.yml: runs directly on the target
+  host, not `salt '<target>' <function>` dispatched from a master, so it
+  uses whatever /src/salt checkout already exists on that specific target
+  independent of any master's own checked-out branch.
+
+  Deliberately does NOT attempt real dual-master dispatch (`salt <target>
+  <function>` issued from a Kestra worker acting as a second salt-master) —
+  per this session's research, get_salt_master() and everything derived from
+  it are a global singleton lookup keyed on pillar prime: true, minions
+  resolve "the master" via one static DNS name with no dual-trust mechanism,
+  and neither worker carries the roles:saltmaster grain for exactly that
+  reason (see config/servers_prod.yaml's/config/servers_staging.yaml's
+  prodkestra01/stagingkestra01 comments in /src/infrastructure). SSH +
+  salt-call --local sidesteps all of that.
+
+  NOT included here: the volume create/remove steps for the ai-builds
+  example itself. ai-builds now sits in staging's dev-subnet group, which
+  StagingKestraWorker is scoped to (roles_staging_kestra_worker.tf) — the
+  IAM gap this note originally flagged (ai-builds living in a
+  differently-scoped group) no longer applies now that dev-subnet is the
+  staging worker's actual target. What's still not built here is the flow
+  itself: this file is only the reusable "run one salt function on one or
+  more hosts" building block a real ai-builds flow would call.
+
+inputs:
+  - id: target_hosts
+    type: ARRAY
+    itemType: STRING
+    description: Hostnames/IPs to run the function against, e.g. ["ai-builds.staging.vpc"]
+  - id: function
+    type: STRING
+    description: Salt execution-module function to call, e.g. mariadb_backup.restore_last_backup
+  - id: args
+    type: STRING
+    defaults: ""
+    description: Extra space-separated arguments appended after the function name, if any
+
+tasks:
+  - id: run_exec
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ inputs.target_hosts }}"
+    concurrencyLimit: 2
+    tasks:
+      - id: exec
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ taskrun.value }}"
+        port: "2007"
+        username: bldeploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+        strictHostKeyChecking: "no"
+        commands:
+          - |
+            set -e
+            echo "Running {{ inputs.function }} on {{ taskrun.value }}"
+            sudo salt-call --local {{ inputs.function }} {{ inputs.args }} --out json
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Salt Exec Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded: {{ inputs.function }} on {{ inputs.target_hosts }}."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * 0"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Salt Exec Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}

@@ -1,0 +1,103 @@
+id: highstate
+namespace: shared.salt
+
+description: |
+  Reusable salt highstate runner. Not migrated from Rundeck — new automation,
+  built as the shared building block for staging.infra/provision-server.yml's
+  terraform+salt PoC, and intended to eventually replace the ad-hoc salt-run/
+  salt-call incantations duplicated across prod.backups/saltrun-database-backups.yml,
+  prod.haproxy/saltrun-certificate-renewal.yml, and similar flows (not migrating
+  those flows to call this yet — out of scope for this change).
+
+  Deliberately runs `salt-call --local` directly on each target host, not
+  `salt-run`/`salt '<target>' state.apply` dispatched from the salt master
+  (prodsalt-arm, the host Kestra itself runs on). `--local` is masterless: it
+  applies whatever /src/salt checkout already exists on that specific target
+  (whichever SALT_LOCAL_BRANCH it was built against — see /src/infrastructure's
+  scripts_etc/init/steps/61-salt-clone-unlock.sh), independent of whatever
+  branch happens to be checked out on the master. That's the whole point —
+  running this against a host built off a non-default salt branch must not
+  silently reset it to master's branch.
+
+  ensure_salt_perms.sh (namespace-files/shared/ensure_salt_perms.sh) is
+  deliberately NOT called here. Per test_salt_perms.py's own scoping notes,
+  that ACL fix is only needed for salt-run's master-side mtime_map cache path —
+  salt-call --local runs standalone on the minion and never touches it.
+
+  Command sequence mirrors /src/infrastructure/scripts_etc/init/steps/70-salt-apply.sh
+  as of this writing, so a Kestra-triggered rerun behaves the same as the
+  first-boot highstate cloud-init already runs. sls_list's default is copied
+  from that script's own base state list — confirm it hasn't drifted before
+  relying on the default for a real run instead of passing an explicit list.
+
+  `inputs:` is a new pattern for this repo (no existing flow takes any) since
+  every prior flow is a fixed Rundeck-job migration with nothing to
+  parameterize — confirm the `defaults:`/ARRAY-input syntax below against
+  the actual deployed Kestra version (docker-compose.yml pins kestra/kestra:latest,
+  not a fixed version) before relying on it.
+
+inputs:
+  - id: target_hosts
+    type: ARRAY
+    itemType: STRING
+    description: Hostnames/IPs to run the highstate against, e.g. ["stagingweb03.staging.vpc"]
+  - id: sls_list
+    type: STRING
+    defaults: "netplan,users,ssh,zsh,python,sudoers,bash,git,groups,sysctl,system-utilities,vim,cloud-config,ubuntu,postfix-null-client,salt-overrides.shared"
+  - id: promote_to_minion
+    type: BOOLEAN
+    defaults: false
+
+tasks:
+  - id: run_highstate
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ inputs.target_hosts }}"
+    concurrencyLimit: 2
+    tasks:
+      - id: highstate
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ taskrun.value }}"
+        port: "2007"
+        username: bldeploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+        strictHostKeyChecking: "no"
+        commands:
+          - |
+            set -e
+            echo "Running highstate on {{ taskrun.value }}"
+            sudo salt-call --local saltutil.sync_all --out json
+            sudo salt-call --local state.sls {{ inputs.sls_list }} --out json
+            sudo salt-call --local vpc_cache.write_merged_cache --out json
+            sudo salt-call --local --force-color state.apply --out json
+            {% if inputs.promote_to_minion %}
+            sudo salt-call --local state.sls salt-overrides.local_to_minion --out json
+            {% endif %}
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Salt Highstate Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded for hosts: {{ inputs.target_hosts }}"
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * 0"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Salt Highstate Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
