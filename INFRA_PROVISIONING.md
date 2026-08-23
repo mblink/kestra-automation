@@ -7,6 +7,11 @@ right, what broke, what needed a different shape than described here. Don't
 let it go stale as a description of intent once it diverges from what's
 actually built.
 
+**Status**: config only, nothing applied/tested against real infrastructure
+yet. All three repos' work lives on `feature/kestra-infra-salt-poc`, pushed
+but not merged. See "How to test this end-to-end" below for the concrete,
+priority-ordered path from here to a real first run.
+
 Spans three repos: this one (`kestra-automation`), `/src/infrastructure`
 (terraform/OpenTofu), and `/src/salt` (SaltStack states + pillar). This file
 lives here; the other two carry a short pointer back to it rather than a
@@ -73,30 +78,93 @@ state object. Philosophy: prefer `AccessDenied` at apply time over a broad
 grant "just in case" — every policy here should be expected to need
 iterating on the first few real runs, not be complete on day one.
 
-**Salt**: each worker gets `salt_minion.roles: [docker, infra-checkout]` —
-`docker` for the container runtime, `infra-checkout` (`/src/salt/salt/
-infra-checkout/init.sls`, new) for a *persistent* git-crypt-unlocked
-`/src/infrastructure` checkout on the host, bind-mounted into whatever
-container actually runs `tofu`/`salt-call` — decrypted infra code
-deliberately isn't baked into a shipped container image.
+**Salt**: each worker gets `salt_minion.roles: [docker, infra-checkout,
+salt-master]` — `docker` for the container runtime, `infra-checkout`
+(`/src/salt/salt/infra-checkout/init.sls`, new) for a *persistent*
+git-crypt-unlocked `/src/infrastructure` checkout on the host, bind-mounted
+into whatever container actually runs `tofu`/`salt-call` (decrypted infra
+code deliberately isn't baked into a shipped container image), and the
+*lean* `salt-master` (daemon config only — **not** `salt-master-prime`,
+which carries mariadb/redis/postfix/etc., a real prime-only concern; see
+"Second salt-master" below).
 
 Each worker is also registered as a **non-`prime` member of the existing
 `server_group: salt-master`** pillar block in its own environment
-(`/src/salt/pillar/{prod,staging}/servers/init.sls`) — visibility/topology
-registration for `vpc_cache` only, **not** the actual salt-master daemon.
-Giving a worker the `roles:saltmaster` grain today would render actively
-*wrong* config, not just an unused daemon: `get_salt_master()`
-(`common/vpc_topology_macros.jinja2`) and everything derived from it
-(`salt-overrides/master.sls`'s `salt-api.conf`/`mysql.conf` rendering) is a
-global singleton lookup keyed on pillar `prime: true` — it never resolves to
-"whichever host is rendering this," so a non-prime worker's own salt-api
-would try to bind to the *existing* prime master's IP, and its own
-mariadb/redis installs (also pulled in by `roles:salt-master`) would sit
-unused. This is a real, unresolved gap in `/src/salt` as it stands, not
-something this work fixes — it's why the worker doesn't actually run a
-master daemon, and why minions don't (and can't yet) accept jobs dispatched
-*from* a worker. That's real follow-on salt engineering, not a Kestra
-problem.
+(`/src/salt/pillar/{prod,staging}/servers/init.sls`) — for `vpc_cache`
+visibility, and as the anchor for the opt-in `secondary_master` field (see
+below).
+
+### Second salt-master: what's real now, what's still open
+
+Started from a real blocker: `get_salt_master()`
+(`common/vpc_topology_macros.jinja2`) is a global lookup keyed on pillar
+`prime: true` — it should keep always resolving to prime (`mysql.conf`'s
+job-cache DB and Redis genuinely are singleton, prime-only resources), but
+one template conflated "the canonical master address" with "my own bind
+address": `salt-overrides/etc/salt/master.d/salt-api.conf`'s
+`rest_cherrypy.host` was set to `{{ master_ip }}` (prime's IP) instead of
+`0.0.0.0`, which only ever "worked" because on the one existing master those
+two happened to be the same value. **Fixed** — `salt-api.conf` now binds
+`0.0.0.0`, `salt-overrides/master.sls` dropped the `get_salt_master()`
+call/context that fix made dead. That's what makes the lean `roles:salt-master`
+grant above safe: a non-prime host's own salt-api now renders correctly
+instead of pointing at the wrong host.
+
+Also done — the user split `top.sls`'s old, bloated `'roles:salt-master'`
+match into three: `roles:salt-api` (mariadb/mariadb-users/mariadb-grants/
+bondlink-config), `roles:salt-master-prime` (postfix-relay/mailutils/redis/
+google/oddjob/salt-api/suricata-update/bondlink-config — "to avoid
+additional packages being installed into a kestra worker in either
+environment"), and the lean `roles:salt-master` (just
+`salt-overrides.master` + `salt-overrides.master-port-bridge`). Set
+`salt-master`+`salt-master-prime` on `prodsalt-arm`/`stagingsalt`.
+`orch/haproxy_swap_finalize.sls`'s `finalize-update-bondlink-config` target
+needed updating to match (it still said `roles:salt-master`, which no
+longer carries `bondlink-config` at all) — verified against the test's own
+extraction logic, not guessed.
+
+**Minion-trust mechanism — designed and implemented, not yet exercised.**
+Minions resolve "the master" via one static DNS name
+(`bondlink_minion.conf`'s `master: salt.<domain>`); Salt supports real
+multi-master natively (`master: [...]` + `master_type: str_list` — connects
+to *all* listed masters simultaneously, unlike `failover`'s one-at-a-time).
+Opt-in, not fleet-wide: a new `secondary_master: <worker>` pillar field on
+specific nodes only (`kestra01: secondary_master: prodkestra01`;
+`ai-builds`/`develop-arm: secondary_master: stagingkestra01`) —
+`salt-overrides/minion.sls` looks it up via `get_servers_config([grains['id']],
+'server_name')`, and `bondlink_minion.conf` renders the `str_list` form only
+when it's set, falling back to today's single-master behavior otherwise.
+
+**Still genuinely open, not code — decisions for whoever exercises this
+next:**
+1. **Per-master key acceptance.** Each master keeps independent minion
+   keys; no shared-PKI shortcut exists. A minion trusting `prodkestra01`
+   needs its key accepted *there* too (manual `salt-key -a`, or `auto_accept:
+   True` traded against relying on security-group scoping).
+2. **Network reach** — confirm `kestra01`/`ai-builds`/`develop-arm` can
+   actually reach their worker's 4505/4506; not checked as part of this
+   work.
+3. **The shared `vpc_pillar_cache_<env>` Redis key has no lock, TTL, or
+   version — plain last-write-wins**, confirmed via `redis_set`'s
+   implementation. `_pillar_cache_key`'s own docstring already documents
+   this as a *real, previously-observed* incident ("a new server group's
+   first build could not see itself and skipped its galera config"), not a
+   hypothetical. This isn't new or specific to a second master — any host's
+   ordinary first boot already exercises it, since `steps/70-salt-apply.sh`
+   calls `vpc_cache.write_merged_cache` unconditionally. A stale, separate
+   worry about this call failing on old 3007.14 minions turned out to be
+   moot (the whole staging fleet has since been upgraded to 3008, and 3008's
+   `pillar.get` genuinely supports the `unmask` kwarg the old code path
+   lacked — verified directly against the installed 3008.0 source, not
+   assumed); the leftover stale references to that non-issue were removed
+   from `CLAUDE.md`, the haproxy-failover skill, and `orch/
+   haproxy_swap_finalize.sls`. The *actual* race (no lock on the shared key)
+   is real and still unaddressed — the better fix discussed but not yet
+   built: make `vpc_cache.get_pillar_cache()` always build fresh from live
+   pillar+AWS data (what `write_merged_cache()` already does) rather than
+   trusting a possibly-stale Redis read, since the underlying
+   `describe_instances` call is cheap (one paginated, single-VPC query) and
+   was never actually a volume concern worth the persistence risk.
 
 ## Flow structure
 
@@ -170,20 +238,83 @@ right call for anything template-free.
 
 ## Open gaps (known, not solved here)
 
-- No apply-capable IAM identity exists yet behind the `east`/`default` AWS
-  profiles `provider.tf` hardcodes — today only human admins or read-only
-  CI roles are on the state bucket's `infrastructure_roles`.
+- `global/iam`/`global/s3` haven't been applied for real yet — `StagingKestraWorker`/
+  `KestraWorker`'s actual AWS role/policy/instance-profile and the state-bucket
+  policy extension only exist as unapplied Terraform.
+- Neither worker (`prodkestra01`/`stagingkestra01`) has actually been built
+  yet — `staging/ops`/`prod/ops` haven't been applied with the new server
+  entries.
+- **`tofu`/OpenTofu isn't installed by anything** — checked; no salt state
+  installs it, and `infra-checkout` only handles the git-crypt-unlocked
+  checkout, not the binary. Needs either a manual install for a first test
+  or a new salt state before this is repeatable.
+- **The `east`/`default` AWS CLI profiles don't exist on either worker.**
+  `provider.tf` hardcodes named profiles, not the ambient instance role.
+  Whether a bare `[profile east]\nregion = us-east-1` stanza (no
+  credentials) resolves through to the instance's own `StagingKestraWorker`/
+  `KestraWorker` role via IMDS, or needs something else, hasn't been
+  verified empirically — `StagingKestraWorker`'s trust policy only trusts
+  `ec2.amazonaws.com`, so a `role_arn`+`credential_source` self-assume
+  approach won't work if the bare-alias approach doesn't pan out.
 - `TF_VAR_aws_creation_key`/`TF_VAR_user_ssh_key` Kestra secrets don't exist
   yet.
-- Neither worker has `tofu`/`aws`/git-crypt actually installed and confirmed
-  working yet — this is all still config, not a provisioned/tested reality.
+- Security-group reach hasn't been confirmed in either direction: Kestra's
+  own host (prodsalt-arm) → the relevant worker, and that worker → its
+  target minion(s).
+- This branch's flows aren't on the Kestra instance Kestra actually runs
+  from — `kestra/init.sls`'s sync only triggers off `main`, not this feature
+  branch; a pre-merge test needs a manual `kestra flow namespace update`.
 - The `ai-builds` mariadb-restore example flow itself isn't built yet — the
   IAM gap that used to block it is gone now that staging's target moved to
   `dev-subnet` (which `ai-builds` is part of), but the actual flow (volume
   create/restore/remove) still needs writing on top of `shared.salt/exec.yml`.
-- The real second-salt-master / minion-dual-trust work (see Architecture) —
-  deliberately out of scope until `get_salt_master()` and friends are made
-  render-host-relative.
+- Second-salt-master minion trust (per-master key acceptance, network
+  reach, the `vpc_cache` write race) — see "Second salt-master" above for
+  what's actually open there; narrower than it used to be, but still real.
+
+## How to test this end-to-end (priority order)
+
+Verified against actual repo state, not assumed — a few steps below are
+genuine open decisions (marked), not guesses to follow blindly.
+
+1. **IAM first — human-run, admin credentials** (this is exactly the kind
+   of change `.claude/settings.json` hard-denies for the agent):
+   ```
+   cd /src/infrastructure/global/iam && tofu init && tofu plan && tofu apply
+   cd /src/infrastructure/global/s3   && tofu init && tofu plan && tofu apply
+   ```
+2. **Build `stagingkestra01`** — also human-run, chicken-and-egg (the
+   worker can't provision itself before it exists). Needs
+   `TF_VAR_aws_creation_key`/`TF_VAR_user_ssh_key` set and `AWS_PROFILE=east`:
+   ```
+   cd /src/infrastructure/staging/ops && tofu init && tofu plan && tofu apply
+   ```
+   Plan should show only `stagingkestra01` as new.
+3. **After first boot**, SSH in and confirm `docker`/`infra-checkout`/lean
+   `salt-master` actually applied, and `/etc/salt/master.d/salt-api.conf`
+   renders `host: 0.0.0.0`.
+4. **Close the two real gaps above manually** for this first test: install
+   `tofu`, and set up/verify the `east` profile
+   (`AWS_PROFILE=east aws sts get-caller-identity` should resolve to
+   `StagingKestraWorker`, not error).
+5. **Confirm SG reach** both directions (prodsalt-arm → `stagingkestra01`,
+   `stagingkestra01` → `ai-builds.staging.vpc`).
+6. **Create the two missing Kestra secrets**: `TF_AWS_CREATION_KEY`,
+   `TF_USER_SSH_KEY`.
+7. **Get this branch's flows onto the real Kestra instance** — merge first,
+   or manually `kestra flow namespace update staging.infra <dir>` (and
+   `shared.infra`, `shared.salt`) against this branch's content.
+8. **Trigger `staging.infra`/`provision-server`** with its defaults
+   (`server_name: ai-builds`) — `ai-builds` already exists, so the plan
+   should be a no-op: a smoke test of connectivity/permissions, not a
+   rebuild.
+9. **Review the `tofu_plan` output at the `Pause` task** before resuming —
+   confirm it's genuinely a no-op before letting `tofu_apply` run.
+10. Confirm `wait_for_ssh`, the `salt_highstate` subflow's `salt-call --local
+    state.apply` on `ai-builds`, and the success notification all complete.
+
+Stop there. Don't extend to `develop-arm`, the `secondary_master`
+minion-trust wiring, or anything in prod until this one path is proven.
 
 ## Where this is referenced
 
