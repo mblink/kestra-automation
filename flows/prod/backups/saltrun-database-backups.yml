@@ -53,7 +53,7 @@ tasks:
         chmod +x /tmp/ensure_salt_perms.sh
         /tmp/ensure_salt_perms.sh
         rm -f /tmp/ensure_salt_perms.sh
-        sudo salt-run backups.replica server=proddb03 destination=s3 --out=json | jq -re 'select(.success == true)'
+        sudo salt-run backups.replica server=proddb04 destination=s3 --out=json | jq -re 'select(.success == true)'
 
 triggers:
   - id: schedule
