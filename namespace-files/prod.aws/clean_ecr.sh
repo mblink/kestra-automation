@@ -15,15 +15,26 @@ regions=(us-east-1 us-east-2)
 
 declare -a appRepos
 declare -a droneRepos
-allRepos=$(/usr/local/bin/aws ecr describe-repositories \
-            --query "repositories[?starts_with(repositoryName, 'drone-') || starts_with(repositoryName, 'bondlink-')].repositoryName" --output text)
-for repo in $allRepos; do
-  if [[ "$repo" == drone-* ]]; then
-    droneRepos+=("$repo")
-  else
-    appRepos+=("$repo")
-  fi
-done
+
+reposForRegion() {
+  region="$1"
+
+  appRepos=()
+  droneRepos=()
+
+  allRepos=$(
+    /usr/local/bin/aws ecr describe-repositories \
+      --region "$region" \
+      --query "repositories[?starts_with(repositoryName, 'drone-') || starts_with(repositoryName, 'bondlink-')].repositoryName" --output text
+  )
+  for repo in $allRepos; do
+    if [[ "$repo" == drone-* ]]; then
+      droneRepos+=("$repo")
+    else
+      appRepos+=("$repo")
+    fi
+  done
+}
 
 branches=(
   RC
@@ -211,6 +222,8 @@ deleteAllButLatestImage() {
 }
 
 for region in "${regions[@]}"; do
+  reposForRegion "$region"
+
   deleteUntaggedImages "${appRepos[@]}"
   deleteBranchImages "${appRepos[@]}"
 
