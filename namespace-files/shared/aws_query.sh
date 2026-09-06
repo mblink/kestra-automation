@@ -6,7 +6,7 @@ set -eo pipefail
 privateDsnByTagName() {
   local tagName="$1"
   local dnsNames
-  dnsNames="$(aws ec2 describe-instances \
+  dnsNames="$(/usr/local/bin/aws ec2 describe-instances \
     --filters "Name=tag:Name,Values=$tagName" "Name=instance-state-name,Values=running" \
     --query "Reservations[].Instances[].NetworkInterfaces[].PrivateIpAddresses[].PrivateDnsName" \
     --output text)"
