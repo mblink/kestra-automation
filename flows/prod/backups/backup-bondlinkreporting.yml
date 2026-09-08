@@ -2,26 +2,12 @@ id: backup-bondlinkreporting
 namespace: prod.backups
 
 description: |
-  Mariadb-dump backup of the BondLinkReporting database, sync'd to S3.
-  Migrated from Rundeck job Prod/Backups/SaltRun: Backups BondLinkReporting
-  (0bb392d4).
+  Mariadb-dump backup of the BondLinkReporting database, sync'd to S3. Runs on
+  prodsalt.
 
-  A second Rundeck job with the identical name and purpose exists
-  (11e0edb8-e0ec-4635-b6d4-8402389a1863, targeting proddbanalytics01 — a CNAME
-  alias of the same host this flow targets) but has no <schedule>/<group>
-  block and uses a bare localexec plugin instead of a real script — strong
-  signal it's a stale duplicate superseded by this one. Not migrated;
-  reconsider if it turns out to still be load-bearing.
-
-  Despite the "SaltRun" name this uses a bare `salt <target> <module.function>`
-  dispatch from the master, not salt-run — it doesn't touch the master's
-  mtime_map cache the way salt-run does, so it doesn't need the
-  ensure_salt_perms.sh ACL fix (matching the source job, which never included
-  it either). No <nodefilters> block at all; targets prodsalt as an
-  assumption — confirm against the live Rundeck job's resolved node list
-  before treating this as validated. Source job also had no <notification>
-  block — see errors: below for the (newly added, this repo's convention)
-  failure notification.
+  Uses a bare `salt <target> <module.function>` dispatch from the master, not
+  salt-run — it doesn't touch the master's mtime_map cache the way salt-run does,
+  so it doesn't need the ensure_salt_perms.sh ACL fix.
 
 tasks:
   - id: run_backup

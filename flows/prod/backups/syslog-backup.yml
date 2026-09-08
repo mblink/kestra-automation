@@ -2,26 +2,20 @@ id: syslog-backup
 namespace: prod.backups
 
 description: |
-  Backup all /var/log/*.gz to S3. Migrated from Rundeck job Prod/Backups/Syslog
-  Backup (f0d8e36d) — still executionEnabled/scheduleEnabled in the Rundeck source
-  (filed under Prod/old_jobs in the rundeck-jobs export, but that's just an export
-  organization artifact, not deprecation) — targets tags:prod, dispatch strategy
-  parallel/keepgoing=true, threadcount 3.
+  Backup all /var/log/*.gz to S3.
 
   Target hosts are discovered dynamically via AWS instance tags (Environment=prod,
   running), same approach as staging.backups' syslog-backup.yml — see that flow and
   bondlink-logs.yml for the discover_*_hosts task shape and its AwsCLI/IMDS
   prerequisite notes (confirmed satisfied on prodsalt-arm, the host Kestra runs on).
-  Kestra's ForEach doesn't stop other iterations when one fails unless told to, so
-  no per-host error handling is needed to preserve dispatch.keepgoing=true's
-  behavior. concurrencyLimit is capped at 3, matching the source job's threadcount.
+  Kestra's ForEach doesn't stop other iterations when one fails, so a failure on one
+  host doesn't halt the rest. concurrencyLimit is capped at 3.
 
   logs/syslogs.sh is a Namespace File (namespace-files/shared/syslogs.sh in this
   repo, synced to Kestra's `shared` namespace), pulled in via
   {{ read('syslogs.sh', namespace='shared') }} — the exact same script backs up
   both staging.backups and this flow, so a script change only needs a single
-  namespace-files edit rather than duplicating it per environment. Source of truth
-  remains rundeck-jobs' logs/syslogs.sh.
+  namespace-files edit rather than duplicating it per environment.
 
 tasks:
   - id: discover_prod_hosts

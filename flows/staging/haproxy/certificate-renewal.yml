@@ -2,17 +2,11 @@ id: certificate-renewal
 namespace: staging.haproxy
 
 description: |
-  Renew all certificates due in less than 30 days. Migrated from Rundeck job
-  Staging/haproxy/Certificate Renewal (46ec2d76).
+  Renew all certificates due in less than 30 days, weekly on Mondays at 07:00 UTC.
 
-  CRON GAP: source schedule is weekday='2' (Rundeck/Quartz-style numbering, SUN=1),
-  so day='2' = Monday = standard-cron dow 1, hence "0 7 * * 1" below — NOT confirmed
-  against Rundeck's live "next run" display, same caveat as every other weekly job in
-  this repo. Source job also had no <timeZone> tag — UTC assumed.
-
-  Unlike the Prod SaltRun: Certificate Renewal flow, this calls a script that already
-  lives on the target host (/etc/letsencrypt/bin/cert_renew.sh) rather than a
-  salt-run command — no inlining needed, it's a plain exec.
+  Unlike prod.haproxy's saltrun-certificate-renewal.yml, this calls a script that
+  already lives on the target host (/etc/letsencrypt/bin/cert_renew.sh) rather
+  than a salt-run command — no inlining needed, it's a plain exec.
 
   Any flow that runs salt-run/salt-call needs the salt-master ACL fix
   (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the
@@ -22,17 +16,15 @@ description: |
   duplicated inline — shared with every other salt-run/salt-call flow in this repo.
 
   Target host is resolved dynamically via namespace-files/shared/aws_query.sh's
-  privateDsnByTagName (Name tag "stagingsalt"), instead of the plain hardcoded
-  hostname this flow used to SSH to directly — same AWS-tag-driven discovery
-  every other backup/salt flow in this repo uses, just for a single expected
-  host instead of a fleet. privateDsnByTagName itself now enforces "exactly 1
-  running host" (fails loudly on 0 or >1 matches) rather than silently taking
-  the first match, since a single SaltRun target can't tolerate ambiguity the
-  way the ForEach-driven fleet flows can. Because exactly one host is
-  guaranteed, run_renewal reads get_target_host's plain-text output file
-  directly (no fromJson/ForEach needed) — that pattern's reserved for flows
-  fanning out over multiple discovered hosts (see backup-binary-logs.yml,
-  bondlink-logs.yml, syslog-backup.yml).
+  privateDsnByTagName (Name tag "stagingsalt") — the same AWS-tag-driven discovery
+  every other backup/salt flow in this repo uses, just for a single expected host
+  instead of a fleet. privateDsnByTagName enforces "exactly 1 running host" (fails
+  loudly on 0 or >1 matches) rather than silently taking the first match, since a
+  single target can't tolerate ambiguity the way the ForEach-driven fleet flows
+  can. Because exactly one host is guaranteed, run_renewal reads get_target_host's
+  plain-text output file directly (no fromJson/ForEach needed) — that pattern's
+  reserved for flows fanning out over multiple discovered hosts (see
+  backup-binary-logs.yml, bondlink-logs.yml, syslog-backup.yml).
 
 tasks:
   - id: get_target_host

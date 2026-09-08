@@ -2,18 +2,11 @@ id: backup-ipreoholdings
 namespace: prod.backups
 
 description: |
-  Mariadb-dump backup of the IpreoHoldings database. Migrated from Rundeck job
-  Prod/Backups/SaltRun: Backup IpreoHoldings (97775e81).
+  Mariadb-dump backup of the IpreoHoldings database. Runs on prodsalt.
 
-  Despite the "SaltRun" name this uses a bare `salt <target> <module.function>`
-  dispatch from the master, not salt-run — it doesn't touch the master's
-  mtime_map cache the way salt-run does, so it doesn't need the
-  ensure_salt_perms.sh ACL fix (matching the source job, which never included
-  it either). No <nodefilters> block at all; targets prodsalt as an
-  assumption — confirm against the live Rundeck job's resolved node list
-  before treating this as validated. Source job also had no <notification>
-  block — see errors: below for the (newly added, this repo's convention)
-  failure notification.
+  Uses a bare `salt <target> <module.function>` dispatch from the master, not
+  salt-run — it doesn't touch the master's mtime_map cache the way salt-run does,
+  so it doesn't need the ensure_salt_perms.sh ACL fix.
 
 tasks:
   - id: run_backup

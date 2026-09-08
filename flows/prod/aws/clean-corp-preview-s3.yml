@@ -2,11 +2,10 @@ id: clean-corp-preview-s3
 namespace: prod.aws
 
 description: |
-  Clean up builds of the corp preview site stored in S3. Migrated from Rundeck job Prod/AWS/Clean corp preview S3 (9b9b5ba7).
+  Clean up builds of the corp preview site stored in S3. Runs on prodsalt; the
+  script takes no args, so it runs in live mode rather than --dry-run.
 
-  Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated.
-
-  aws/clean_corp_preview.sh is a Namespace File
+  clean_corp_preview.sh is a Namespace File
   (namespace-files/prod.aws/clean_corp_preview.sh in this repo, synced to
   Kestra's own prod.aws namespace), pulled in via
   {{ read('clean_corp_preview.sh') }} (no namespace= override needed — read()
@@ -19,20 +18,12 @@ description: |
   `ParserException: Unclosed comment` at execution time. Escaping every
   `${#...}` occurrence is fragile and easy to reintroduce; read()'s return
   value is never re-parsed for template syntax, so this sidesteps the whole
-  class of bug. Source job called this with no args (live mode, not --dry-run).
+  class of bug.
 
-  DELIBERATE DIVERGENCE from rundeck-jobs' aws/clean_corp_preview.sh: also
-  failed live, separately from the Pebble bug above, with
-  "SSH command fails with exit status 127". `set -x` tracing showed it died on
-  the very first `wait -n` call, before any background job had even started —
-  that only happens if `parallelJobs` (`$((cpus / 2))`, cpus from `nproc --all`)
-  computes to 0, and per bash's own manual, `wait -n` with zero active
-  background jobs returns exit status 127. prodsalt-arm is an x8g.medium — 1
-  vCPU — so `nproc --all` returns 1 and integer division makes `parallelJobs`
-  0. This never surfaced under Rundeck (presumably run on a multi-core agent)
-  and the script "ran to completion" when pulled to a local (multi-core)
-  machine — it's genuinely host-CPU-count-dependent. Fixed by flooring
-  parallelJobs at 1 in the Namespace File; not fixed upstream in rundeck-jobs.
+  parallelJobs is floored at 1 in the Namespace File. It derives from
+  `$((cpus / 2))` with cpus from `nproc --all`, and prodsalt-arm is an
+  x8g.medium — 1 vCPU — so integer division yields 0, and `wait -n` with zero
+  active background jobs exits 127.
 
 tasks:
   - id: clean_corp_preview

@@ -3,17 +3,13 @@ namespace: prod.backups
 
 description: |
   Database backups for developers (no data for Emails, ActivityNotifications, or
-  IssuerPaymentTokens). Migrated from Rundeck job Prod/Backups/Dev Database Backup
-  (28f6e88b) — originally a 3-step copyfile+exec+scriptfile job against proddbanalytics,
-  collapsed here into one SSH session since io.kestra.plugin.fs.ssh.Command runs all
-  `commands` entries joined in a single exec channel.
-
-  Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck before
-  relying on the exact trigger time.
+  IssuerPaymentTokens). Runs against proddbanalytics in a single SSH session,
+  since io.kestra.plugin.fs.ssh.Command runs all `commands` entries joined in one
+  exec channel.
 
   NOTE: dev_bondlink_backup.sh sources /src/oddjob/mariadb/backup_lib.sh on the target
   host, which is NOT part of this repo — that dependency must already exist on
-  proddbanalytics (as it does today for Rundeck) for this flow to succeed.
+  proddbanalytics for this flow to succeed.
 
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
@@ -30,9 +26,7 @@ description: |
   by the outer shell) rather than pulled from Namespace Files — simpler than standing
   up a separate namespace-files sync mechanism, at the cost of duplicating the script
   body anywhere else it's reused (e.g. delete_versions.sh also appears in other
-  Backups flows with different args). Source of truth for both scripts remains
-  rundeck-jobs' databases/dev_bondlink_backup.sh and aws/delete_versions.sh — if those
-  change, this flow needs a matching manual update.
+  Backups flows with different args).
 
 tasks:
   - id: backup_and_prune

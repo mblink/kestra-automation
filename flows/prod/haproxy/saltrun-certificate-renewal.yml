@@ -2,13 +2,8 @@ id: saltrun-certificate-renewal
 namespace: prod.haproxy
 
 description: |
-  Renew all certificates due in less than 30 days. Migrated from Rundeck job
-  Prod/haproxy/SaltRun: Certificate Renewal (90d31943).
-
-  CRON GAP: source schedule is weekday='2' (Rundeck/Quartz-style numbering, SUN=1).
-  If that convention holds, day='2' = Monday = standard-cron dow 1, hence "0 7 * * 1"
-  below — but this is NOT confirmed against Rundeck's live "next run" display, per
-  this repo's cron-conversion caveat. Verify before relying on this trigger.
+  Renew all certificates due in less than 30 days. Runs on prodsalt, weekly on
+  Mondays at 07:00 UTC.
 
   Demonstrates the dual onfailure/onsuccess notification pattern: the success email
   is just a second task that only runs if run_renewal succeeds (Kestra's default

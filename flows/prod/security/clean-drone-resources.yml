@@ -2,33 +2,17 @@ id: clean-drone-resources
 namespace: prod.security
 
 description: |
-  Prune docker resources on drone build agents. Migrated from Rundeck job
-  Prod/Security/Clean Drone Resources (c18e2825) — currently DISABLED in Rundeck
-  (executionEnabled: false); run manually from the Kestra UI to test.
+  Prune docker resources on drone build agents.
 
-  PLACEHOLDER TRIGGER: every flow in this repo is required to have a triggers:
-  block (enforced by tests/test_flow_structure.py), but the source Rundeck job
-  never had a schedule to carry over (it was disabled before one was ever set).
-  The cron below ("0 3 * * 0", weekly Sunday 3am — a guess at a reasonable
-  maintenance-window cadence for a cleanup job) is fabricated, not sourced from
-  Rundeck — confirm/replace it with a real intended schedule before flipping
-  disabled to false.
-
-  Original Rundeck node filter named proddroneagent01/02/03, but the current
-  s3://bondlink-rundeck/prod.xml inventory only has proddroneagent04/05/06 —
-  targets below use the hosts that actually exist today. Confirm against live
-  Rundeck whether 01-03 were renamed/decommissioned before trusting this mapping.
-
-  Original strategy was `node-first` (run full sequence on one host before the
-  next); translated here as 3 independent tasks with no dependsOn, matching this
-  repo's general parallel-vs-node-first convention since there's no real
-  cross-host dependency in a cleanup job like this.
-
-  Target hosts are now discovered dynamically via AWS instance tags
-  (Environment=prod, NodeType=drone-agent, running) instead of the hardcoded
-  proddroneagent04/05/06 list above — see bondlink-logs.yml for the
-  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
+  Target hosts are discovered dynamically via AWS instance tags
+  (Environment=prod, NodeType=drone-agent, running) — see bondlink-logs.yml for
+  the discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
   confirmed satisfied on prodsalt-arm, the host Kestra runs on).
+
+  PLACEHOLDER TRIGGER: the cron below ("0 3 * * 0", weekly Sunday 3am) is a guess
+  at a reasonable maintenance-window cadence, not a schedule anyone chose, and the
+  trigger carries disabled: true. Replace it with a real intended schedule before
+  enabling; run manually from the Kestra UI to test.
 
 tasks:
   - id: discover_drone_hosts

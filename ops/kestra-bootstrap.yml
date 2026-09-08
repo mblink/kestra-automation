@@ -5,8 +5,8 @@ description: |
   LOCAL-DEV CONVENIENCE ONLY — syncs this repo's flows/ tree into a local Kestra
   instance using Kestra's own internal git-sync plugin. This is NOT the production
   sync mechanism: per the salt/kestra state (id_rsa_bldeploy + GitHub PAT askpass
-  script), production instead does a host-level `git pull` (mirroring rundeck-jobs'
-  sync_git.sh) followed by `kestra flow namespace update <ns> <dir> --server ...
+  script), production instead does a host-level `git pull` followed by
+  `kestra flow namespace update <ns> <dir> --server ...
   --user=USER:PASS` (OSS CLI auth is basic-auth, no --api-token — that's
   Enterprise-only).
 

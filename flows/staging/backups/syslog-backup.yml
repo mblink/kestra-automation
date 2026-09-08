@@ -2,35 +2,25 @@ id: syslog-backup
 namespace: staging.backups
 
 description: |
-  Backup all /var/log/sudoers*.gz to S3. Migrated from Rundeck job
-  Staging/Backups/Syslog Backup (cba07245) — targets tags:staging, which at export
-  time resolved to ALL 9 nodes in the fetched s3://bondlink-rundeck/staging.xml
-  inventory (every staging node carries that tag).
+  Backup all /var/log/sudoers*.gz to S3.
 
-  Target hosts are now discovered dynamically via AWS instance tags
-  (Environment=staging, running) instead of the frozen 9-host list from that
-  export — this naturally tracks the live staging fleet (currently 16 running
-  instances, including several added since the export: stagingdb01/02/05,
-  stagingredis-sa-arm, stagingops, ai-builds, develop-arm) and drops hosts that no
-  longer exist (the old list's stagingweb01/02 and staginglb01 are gone). The
-  backup script itself is a no-op on any host with no matching syslogs, so
+  Target hosts are discovered dynamically via AWS instance tags
+  (Environment=staging, running), so this tracks the live staging fleet. The
+  backup script is a no-op on any host with no matching syslogs, so
   over-including a host here is harmless — same rationale as bondlink-logs.yml,
   which uses this identical discovery pattern (see that flow for the
   discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes, already
   confirmed satisfied on prodsalt-arm, the host Kestra runs on).
 
-  Source job's dispatch.keepgoing=true (continue to other hosts even if one fails) —
-  Kestra's ForEach doesn't stop other iterations when one fails unless told to, so
-  no per-host error handling is needed to preserve that behavior. concurrencyLimit
-  is capped at 3 (not unlimited) to throttle how many hosts run this in parallel.
+  Kestra's ForEach doesn't stop other iterations when one fails, so a failure on
+  one host doesn't halt the rest. concurrencyLimit is capped at 3 (not unlimited)
+  to throttle how many hosts run this in parallel.
 
-  logs/syslogs.sh is now a Namespace File (namespace-files/shared/syslogs.sh in this
+  logs/syslogs.sh is a Namespace File (namespace-files/shared/syslogs.sh in this
   repo, synced to Kestra's `shared` namespace), pulled in via
-  {{ read('syslogs.sh', namespace='shared') }} instead of being duplicated inline —
-  this is the first flow using this pattern, shared with prod.backups'
-  syslog-backup.yml so the exact same script backs up both environments. Source of
-  truth remains rundeck-jobs' logs/syslogs.sh; if that changes, update
-  namespace-files/shared/syslogs.sh here and both flows pick it up automatically.
+  {{ read('syslogs.sh', namespace='shared') }} instead of being duplicated inline
+  — shared with prod.backups' syslog-backup.yml so the exact same script backs up
+  both environments.
 
 tasks:
   - id: discover_staging_hosts

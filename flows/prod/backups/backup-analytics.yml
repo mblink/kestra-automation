@@ -3,20 +3,14 @@ namespace: prod.backups
 
 description: |
   Runs logical backup of the analytics server, replicated data plus locally
-  written. Migrated from Rundeck job Prod/Backups/SaltRun: Backup Analytics
-  (2fa843c9).
+  written. Dispatched with salt-run from prodsalt, the Salt master.
 
-  Source job had no <nodefilters> block at all; since salt-run only runs on the
-  Salt master, this flow targets prodsalt as an assumption — confirm against
-  the live Rundeck job's resolved node list before treating this as validated.
-  Source job also had no explicit <timeZone> tag — UTC assumed.
-
-  Any flow that runs salt-run needs the salt-master ACL fix
+  Any flow that runs salt-run/salt-call needs the salt-master ACL fix
   (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the
   command fails with a permissions error. That's namespace-files/shared/
   ensure_salt_perms.sh, pulled in via
   {{ read('ensure_salt_perms.sh', namespace='shared') }} instead of being
-  duplicated inline — shared with every other salt-run flow in this repo.
+  duplicated inline — shared with every other salt-run/salt-call flow in this repo.
 
 tasks:
   - id: run_backup

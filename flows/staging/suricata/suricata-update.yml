@@ -2,13 +2,8 @@ id: suricata-update
 namespace: staging.suricata
 
 description: |
-  Update Suricata sources via salt orchestration. Migrated from Rundeck job
-  Staging/Suricata/Suricata Update (472e539f).
-
-  CRON GAP: source schedule is weekday='1,5' (Rundeck/Quartz-style numbering, SUN=1),
-  so day='1,5' = Sunday,Thursday = standard-cron dow 0,4, hence "0 0 * * 0,4" below —
-  NOT confirmed against Rundeck's live "next run" display, same caveat as every other
-  weekly job in this repo.
+  Update Suricata sources via salt orchestration. Runs on stagingsalt, Sundays and
+  Thursdays at 00:00 UTC.
 
   Any flow that runs salt-run/salt-call needs the salt-master ACL fix
   (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the

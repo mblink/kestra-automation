@@ -2,22 +2,13 @@ id: backup-binary-logs
 namespace: prod.backups
 
 description: |
-  Back up binary logs of cluster nodes. Migrated from Rundeck job
-  Prod/Backups/Backup Binary Logs (27e0de96) — original Rundeck strategy was
-  `parallel` across proddb01,proddb03 with threadcount 3, which at export time
-  was a hardcoded 2-host list (proddb03 didn't even appear in the fetched
-  s3://bondlink-rundeck/prod.xml inventory, only proddb01/proddb02 — likely
-  renamed/decommissioned at export time and back since).
+  Back up binary logs of cluster nodes.
 
-  Target hosts are now discovered dynamically via AWS instance tags
-  (Environment=prod, NodeType=cluster-node, running) instead of that hardcoded
-  list — this resolves the GAP above by construction (whatever's tagged as a
-  cluster node gets backed up) and confirmed live today covers all 3 current
-  nodes: proddb01, proddb02, proddb03. See bondlink-logs.yml for the
-  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
-  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
-
-  Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck.
+  Target hosts are discovered dynamically via AWS instance tags
+  (Environment=prod, NodeType=cluster-node, running), so whatever is tagged as a
+  cluster node gets backed up. See bondlink-logs.yml for the discover_*_hosts
+  task shape and its AwsCLI/IMDS prerequisite notes (already confirmed satisfied
+  on prodsalt-arm, the host Kestra runs on).
 
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
@@ -31,7 +22,7 @@ description: |
   the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
 
   binlog_backups.sh is inlined below (quoted heredoc) rather than pulled from
-  Namespace Files. Source of truth remains rundeck-jobs' databases/binlog_backups.sh.
+  Namespace Files — it's only used by this one flow.
 
 tasks:
   - id: discover_db_hosts

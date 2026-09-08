@@ -2,28 +2,22 @@ id: bondlink-logs
 namespace: prod.backups
 
 description: |
-  Backup everything matching /var/log/bondlink/*.gz to S3. Migrated from Rundeck job
-  Prod/Backups/BondLink Logs (f08c430a).
+  Backup everything matching /var/log/bondlink/*.gz to S3.
 
-  Target hosts are now discovered dynamically via AWS instance tags
-  (Environment=prod, BondLinkApp=true, running) instead of a hardcoded list —
-  this supersedes the prior GAP note about the Rundeck source job's tag filter
-  ("tags:web, tags:corporate, tags:docker, tags:partner, tags:cron") only
-  resolving "web" against the fetched inventory. BondLinkApp=true is the tag that
-  actually captures every host running some part of the BondLink app stack (web,
-  jobs, ice/BaseX, salt master, jump, dev/build boxes), matching the Rundeck job's
-  original broad intent; the backup script itself no-ops cleanly on any host with
-  no /var/log/bondlink/*.gz files, so over-including a host here is harmless.
+  Target hosts are discovered dynamically via AWS instance tags
+  (Environment=prod, BondLinkApp=true, running). BondLinkApp=true is the tag that
+  captures every host running some part of the BondLink app stack (web, jobs,
+  ice/BaseX, salt master, jump, dev/build boxes); the backup script no-ops
+  cleanly on any host with no /var/log/bondlink/*.gz files, so over-including a
+  host here is harmless.
 
   logs/bondlink_logs.py is a Namespace File (namespace-files/shared/bondlink_logs.py
   in this repo, synced to Kestra's `shared` namespace), pulled in via
   {{ read('bondlink_logs.py', namespace='shared') }} instead of being duplicated
   inline — the script's own ENV = "prod" if "prod" in HOSTNAME else "staging" logic
-  already made it identical between environments, so it's shared with
-  staging.backups' bondlink-logs.yml the same way staging/prod syslog-backup.yml
-  share syslogs.sh. Source of truth remains rundeck-jobs' logs/bondlink_logs.py; if
-  that changes, update namespace-files/shared/bondlink_logs.py here and both flows
-  pick it up automatically. Runs via /opt/saltstack/salt/bin/python3 (the salt onedir's bundled
+  makes it identical between environments, so it's shared with staging.backups'
+  bondlink-logs.yml the same way staging/prod syslog-backup.yml share syslogs.sh.
+  Runs via /opt/saltstack/salt/bin/python3 (the salt onedir's bundled
   Python 3.14), not the system python3 (3.12 on these hosts) — the salt
   onedir env is where `more_itertools`/`boto3`/`botocore` are actually
   installed; the system python3 lacks them. Never invoke this as a bare

@@ -15,7 +15,7 @@ python3 -m venv .venv
 `tests/unit/test_flow_structure.py` covers baseline sanity: required keys, id/namespace
 match their file path, ssh.Command tasks have all required connection fields, and
 every flow has non-empty `errors:` and `triggers:` blocks — a flow with no known
-schedule (disabled at the Rundeck source) still needs a `triggers:` block, just
+schedule still needs a `triggers:` block, just
 with a `Schedule` trigger carrying `disabled: true` rather than omitting the block
 entirely (see `wazuh-logs.yml`/`clean-drone-resources.yml`). `tests/unit/test_salt_perms.py`
 enforces one specific rule: any flow that runs salt-run/salt-call must call

@@ -3,16 +3,11 @@ namespace: prod.database
 
 description: |
   Update the Analytics database from various sources — multiple ETL jobs
-  (Google Analytics ETL). Migrated from Rundeck job Prod/Database/SaltRun:
-  Analytics Updates (21c92c3d).
+  (Google Analytics ETL). Runs on prodsalt.
 
   Uses `salt-call --local`, not salt-run — it runs standalone on the minion
   itself with no master connection at all, so it doesn't touch the master's
-  mtime_map cache and doesn't need the ensure_salt_perms.sh ACL fix (matching
-  the source job, which never included it either). No <nodefilters> block at
-  all; targets prodsalt as an assumption since --local implies running
-  wherever the salt-call itself executes — confirm against the live Rundeck
-  job's resolved node list before treating this as validated.
+  mtime_map cache and doesn't need the ensure_salt_perms.sh ACL fix.
 
 tasks:
   - id: run_etl

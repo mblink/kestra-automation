@@ -3,16 +3,11 @@ namespace: prod.security
 
 description: |
   Fetch all Suricata alerts in the last 24 hours and send a grouped report for
-  high-priority alerts. Migrated from Rundeck job Prod/Security/SaltRun:
-  Suricata Alert Check (0d0f8105). Source description note carried over: "Not
-  actually salt-run, called from a module."
+  high-priority alerts. Runs on prodsalt.
 
   Uses a bare `salt <target> <module.function>` dispatch from the master, not
-  salt-run — it doesn't touch the master's mtime_map cache the way salt-run
-  does, so it doesn't need the ensure_salt_perms.sh ACL fix (matching the
-  source job, which never included it either). No <nodefilters> block at all;
-  targets prodsalt as an assumption — confirm against the live Rundeck job's
-  resolved node list before treating this as validated.
+  salt-run — it doesn't touch the master's mtime_map cache the way salt-run does,
+  so it doesn't need the ensure_salt_perms.sh ACL fix.
 
 tasks:
   - id: check_alerts

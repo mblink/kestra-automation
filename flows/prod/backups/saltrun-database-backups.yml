@@ -2,13 +2,8 @@ id: saltrun-database-backups
 namespace: prod.backups
 
 description: |
-  Production database backups, sync'd to S3.
-  Migrated from Rundeck job Prod/Backups/SaltRun: Database Backups (073b9e06).
-
-  NOTE: the source Rundeck job had no <nodefilters> block at all (unusual — most jobs
-  specify an explicit target). Since salt-run only runs on the Salt master, this flow
-  targets prodsalt as an assumption — confirm against the live Rundeck job's resolved
-  node list before treating this as validated.
+  Production database backups, sync'd to S3. Dispatched with salt-run from
+  prodsalt, the Salt master.
 
   Any flow that runs salt-run/salt-call needs the salt-master ACL fix
   (getfacl/setfacl on /var/cache/salt/minion/roots/mtime_map) run first, or the
@@ -16,13 +11,11 @@ description: |
   ensure_salt_perms.sh here, pulled in via
   {{ read('ensure_salt_perms.sh', namespace='shared') }} the same way syslogs.sh
   and bondlink_logs.py are shared — see prod.backups' bondlink-logs.yml for that
-  pattern's own notes. (A prior `namespaceFiles: include: [ensure_salt_perms.sh]`
-  on this task never actually got referenced from commands, and namespaceFiles on
-  an ssh.Command task only stages files into the Kestra worker's own local working
-  directory anyway — it doesn't upload them to the remote SSH host, so it couldn't
-  have worked here regardless. Removed in favor of the read()-into-heredoc pattern,
-  which does work since it's rendered into the command text before it's sent over
-  SSH.)
+  pattern's own notes. (namespaceFiles: on an ssh.Command task only stages files
+  into the Kestra worker's own local working directory — it doesn't upload them
+  to the remote SSH host, so it can't be used here. The read()-into-heredoc
+  pattern does work, since it's rendered into the command text before it's sent
+  over SSH.)
 
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
