@@ -2,22 +2,18 @@ id: wazuh-logs
 namespace: prod.backups
 
 description: |
-  Backup all wazuh logs. Migrated from Rundeck job Prod/Backups/Wazuh Logs
-  (ea73e810) — targets tags:monitor, which resolves to prodops02 AND
-  prodops03 (unlike staging's wazuh-logs.yml, which only has one tags:monitor
-  host — prod genuinely has two, so this uses the dynamic discovery + ForEach
-  pattern rather than a single hardcoded host). See bondlink-logs.yml for the
-  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
-  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
+  Backup all wazuh alert logs. Replaces the hand-installed crontab on the wazuh manager that syncs
+  the same tree to s3://bondlink-data/ossec-logs/prod/ daily at 00:00 UTC — that crontab exists in
+  no repo, and removing it is part of retiring bondlink-data. Migrated from Rundeck job
+  Prod/Backups/Wazuh Logs (ea73e810). See bondlink-logs.yml for the discover_*_hosts task shape and
+  its AwsCLI/IMDS prerequisite notes (already confirmed satisfied on prodsalt-arm, the host Kestra
+  runs on).
 
-  BROKEN EXPORT: the source job's <schedule> block was empty/missing entirely
-  in the export (scheduleEnabled: true, but no cron data survived — same class
-  of gap as saltrun-rundeck-backup.yml/disconnected-agent-check.yml). Every
-  flow in this repo is required to have a triggers: block (enforced by
-  tests/test_flow_structure.py), so the cron below ("0 6 * * *", once daily —
-  matching staging's own fabricated placeholder for the analogous job) is
-  fabricated, not sourced from Rundeck. disabled: true until a real schedule
-  is confirmed against live Rundeck.
+  Discovery is narrowed to DeployStatus=active, not to NodeType=wazuh-docker alone. Both prodops02
+  and prodops03 carry that NodeType, but only prodops02 runs the wazuh manager (pillar/prod/servers
+  gives it wazuh_roles server+dashboard, prodops03 indexer only), so it is the only host with a
+  /var/ossec/logs/alerts tree — fanning out to both would fail the sync on prodops03 and, if the
+  path ever existed there, would have two hosts overwrite each other's keys under one prefix.
 
 tasks:
   - id: discover_monitor_hosts
@@ -27,7 +23,7 @@ tasks:
     commands:
       - |
         aws ec2 describe-instances \
-          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=wazuh-docker" "Name=instance-state-name,Values=running" \
+          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=wazuh-docker" "Name=tag:DeployStatus,Values=active" "Name=instance-state-name,Values=running" \
           --query "Reservations[].Instances[].{Name: Tags[?Key=='Name']|[0].Value, PrivateDnsName: NetworkInterfaces[0].PrivateDnsName}" \
           --output json > instances.json
 
@@ -53,9 +49,8 @@ tasks:
 triggers:
   - id: schedule
     type: io.kestra.plugin.core.trigger.Schedule
-    cron: "0 6 * * *"
+    cron: "0 0 * * *"
     timezone: UTC
-    disabled: true
 
 errors:
   - id: notify_failure

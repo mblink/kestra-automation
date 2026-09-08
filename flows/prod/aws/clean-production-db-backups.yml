@@ -2,9 +2,19 @@ id: clean-production-db-backups
 namespace: prod.aws
 
 description: |
-  Deletes backups based on a retention policy (weekly and monthly deletes after 2 years). Migrated from Rundeck job Prod/AWS/Clean Production DB backups (cb3aefd5).
+  Retention for the date-stamped MySQL backups in s3://bondlink-data-east. backups/mysql/bondlink-us-east-1
+  gets GFS bands -- every entry kept for 366 days, Sundays only for the year before that,
+  first-of-month only back to 20 years. Storage class and any flat age-based expiry belong to the
+  bucket's lifecycle rules; this job exists only for what lifecycle cannot express.
 
-  Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated. Source job also had no explicit <timeZone> tag -- UTC assumed, matching this repo's general convention.
+  Bucket, prefix, retention policy and delete mode are all required arguments. Delete mode is a
+  property of the (bucket, prefix) pair rather than the bucket: marker mode leaves a delete marker
+  for lifecycle to reap and is refused unless an enabled rule covers the prefix with both
+  NoncurrentVersionExpiration and ExpiredObjectDeleteMarker. Deletes are opt-in -- the script
+  reports and exits unless passed --live.
+
+  backups/mysql/mariadb-dump follows the same policy but has no reaping rule on this bucket, so the
+  script refuses it; it joins this flow once that lifecycle rule exists.
 
   aws/clean_database_backups.sh is a Namespace File
   (namespace-files/prod.aws/clean_database_backups.sh in this repo, synced to
@@ -20,9 +30,7 @@ description: |
   `ParserException: Unclosed comment` at execution time. Escaping every
   `${#...}` occurrence is fragile and easy to reintroduce; read()'s return
   value is never re-parsed for template syntax, so this sidesteps the whole
-  class of bug. Source of truth remains rundeck-jobs' aws/clean_database_backups.sh.
-  Source job called this with no scriptargs, so it runs live (script treats
-  any first arg other than --dryrun as live mode).
+  class of bug.
 
 tasks:
   - id: clean_db_backups
@@ -40,7 +48,7 @@ tasks:
         {{ read('clean_database_backups.sh') }}
         CLEAN_DB_BACKUPS_SCRIPT
         chmod +x /tmp/clean_database_backups.sh
-        /tmp/clean_database_backups.sh
+        /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker --live
         rm -f /tmp/clean_database_backups.sh
 
 triggers:

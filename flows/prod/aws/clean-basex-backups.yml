@@ -6,7 +6,9 @@ description: |
 
   Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated.
 
-  aws/clean_basex_backups.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow, unlike syslogs.sh/bondlink_logs.py/ensure_salt_perms.sh which are genuinely shared across multiple flows. Source of truth remains rundeck-jobs' aws/clean_basex_backups.sh. Source job called this with no args (live mode, not --dry-run).
+  Keeps the newest backup per calendar month for months older than three months, and everything from the last three months, under s3://bondlink-data-east/backups/basex. Only `IceGsm-` full backups are matched; `IceGsmUpdateLog-` keys are never pruned.
+
+  clean_basex_backups.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow, unlike syslogs.sh/bondlink_logs.py/ensure_salt_perms.sh which are genuinely shared across multiple flows. It is called with no args, so it runs live rather than --dry-run.
 
 tasks:
   - id: clean_backups
@@ -77,7 +79,7 @@ tasks:
           startYearMonth="$(computeStartYearMonth)"
         done
 
-        s3Bucket='bondlink-data'
+        s3Bucket='bondlink-data-east'
         s3Prefix='backups/basex'
         keyRx='^'$s3Prefix'/IceGsm-(?<ym>[0-9]{4}-[0-9]{2})-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}\\.(zip|tar\\.br|tar\\.zst)$'
 

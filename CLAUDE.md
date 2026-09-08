@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Kestra flow content only** — flow YAML plus the shell/Python scripts those flows execute. It does
 not install or configure Kestra itself; that lives in the separate `salt` repo under `salt/kestra/`
-(the two repos' `SESSION_DEBRIEF.md` files are meant to be read together). The flows are conversions
-of Rundeck jobs from the `rundeck-jobs` repo, which remains the source of truth for the scripts many
-flows inline — each flow's `description:` names its source job and script path.
+(the two repos' `SESSION_DEBRIEF.md` files are meant to be read together). Every script a flow runs
+is vendored here — inlined in the flow, or under `namespace-files/` and pulled in with `read()` — so
+this repo is self-contained at runtime. Flow `description:` fields name a Rundeck job and script
+path; that is provenance only, and `mblink/rundeck-jobs` is not a source to consult.
 
 `SESSION_DEBRIEF.md` is a point-in-time migration snapshot, not living documentation: verify any
 "X isn't possible" claim there against current code/tooling before acting on it.
