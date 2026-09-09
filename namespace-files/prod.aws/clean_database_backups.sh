@@ -13,6 +13,10 @@ KEEP_DAYS=
 MAX_STALE_DAYS=
 DRYRUN=1
 
+# Absolute by default: the Kestra SSH session's PATH does not include it. Overridable only so the
+# test suite can put a stub in front; nothing in production sets this.
+AWS_BIN="${AWS_BIN:-/usr/local/bin/aws}"
+
 usage() {
   cat <<'USAGE'
 Usage: clean_database_backups.sh --bucket <bucket> --prefix <prefix> --retain <policy>
@@ -110,7 +114,10 @@ TOP_LEVEL="s3://${S3_BUCKET}/${S3_PREFIX}"
 START_DAILY=$(date +'%Y-%m-%d')
 START_WEEKLY=$(date -d "${START_DAILY} - 366 days" +'%Y-%m-%d')
 END_WEEKLY=$(date -d "${START_WEEKLY} - 1 years" +'%Y-%m-%d')
-START_MONTHLY=$(date -d "${END_WEEKLY} + 1 day" +'%Y-%m-%d')
+# END_WEEKLY itself, not +1 day: the monthly test is `< START_MONTHLY`, so a +1 made the monthly
+# band include END_WEEKLY and overlap the weekly one. A Sunday there was declined by the weekly
+# rule and then deleted by the monthly rule for not being the 1st.
+START_MONTHLY="${END_WEEKLY}"
 END_MONTHLY=$(date -d "now - 20 years" +'%Y-%m-%d')
 
 # %u, not %A: the day *name* is locale-dependent, so a non-English LC_TIME on the runner would
@@ -125,7 +132,7 @@ declare -a monthly
 # Without both rules the bytes stay billable forever and the delete makes the bucket cost more.
 assertReapingLifecycle() {
   local cfg reaps
-  cfg=$(/usr/local/bin/aws s3api get-bucket-lifecycle-configuration --bucket "${S3_BUCKET}" --output json 2>/dev/null) || {
+  cfg=$("${AWS_BIN}" s3api get-bucket-lifecycle-configuration --bucket "${S3_BUCKET}" --output json 2>/dev/null) || {
     log "Refusing --mode marker: ${S3_BUCKET} has no lifecycle configuration, so deleted versions would never expire"
     exit 1
   }
@@ -135,7 +142,7 @@ assertReapingLifecycle() {
       | . as $r
       | select((($r.Filter.And // {}) | keys - ["Prefix"] | length) == 0)
       | (($r.Filter.Prefix // $r.Filter.And.Prefix // $r.Prefix // "")) as $rp
-      | select($rp != "" and ($p | startswith($rp)))
+      | select($p | startswith($rp))
     ] as $matched
     | (($matched | map(select(.NoncurrentVersionExpiration != null)) | length) > 0)
       and (($matched | map(select(.Expiration.ExpiredObjectDeleteMarker == true)) | length) > 0)
@@ -185,7 +192,9 @@ keyToStampS() {
   if [[ "$1" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2}) ]]; then
     printf '%s%s%s%s%s%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
       "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "${BASH_REMATCH[6]}"
-  elif [[ "$1" =~ ^([0-9]{14})_[A-Za-z][A-Za-z0-9]*\. ]]; then
+  # Underscores are legal in a schema name, so the name segment has to admit them -- the producer
+  # writes {stamp}_{database}.sql.zst for whatever INFORMATION_SCHEMA.SCHEMATA returns.
+  elif [[ "$1" =~ ^([0-9]{14})_[A-Za-z][A-Za-z0-9_]*\. ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
   fi
   return 0
@@ -208,10 +217,10 @@ deleteAllVersions() {
   token=
   while :; do
     if [ -n "${token}" ]; then
-      page=$(/usr/local/bin/aws s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
+      page=$("${AWS_BIN}" s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
         --max-items 1000 --starting-token "${token}" --output json)
     else
-      page=$(/usr/local/bin/aws s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
+      page=$("${AWS_BIN}" s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
         --max-items 1000 --output json)
     fi
     ids=$(jq -c '[ (.Versions // [])[], (.DeleteMarkers // [])[] | {Key, VersionId} ]' <<< "${page}")
@@ -221,7 +230,7 @@ deleteAllVersions() {
     if [ "${count}" -gt 0 ]; then
       while read -r chunk; do
         payload=$(jq -c '{Objects: ., Quiet: true}' <<< "${chunk}")
-        res=$(/usr/local/bin/aws s3api delete-objects --bucket "${S3_BUCKET}" --delete "${payload}" --output json)
+        res=$("${AWS_BIN}" s3api delete-objects --bucket "${S3_BUCKET}" --delete "${payload}" --output json)
         errCount=$(jq '(.Errors // []) | length' <<< "${res}")
         if [ "${errCount}" -gt 0 ]; then
           log "delete-objects reported ${errCount} error(s) under ${keyPrefix}:"
@@ -242,10 +251,10 @@ countAllVersions() {
   token=
   while :; do
     if [ -n "${token}" ]; then
-      page=$(/usr/local/bin/aws s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
+      page=$("${AWS_BIN}" s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
         --max-items 1000 --starting-token "${token}" --output json)
     else
-      page=$(/usr/local/bin/aws s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
+      page=$("${AWS_BIN}" s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
         --max-items 1000 --output json)
     fi
     objects=$(jq '((.Versions // []) | length) + ((.DeleteMarkers // []) | length)' <<< "${page}")
@@ -289,7 +298,7 @@ maybeDeleteBackup() {
         log "*** ${checkType} - $i/$totalKeys *** aws s3 rm ${recursive}${TOP_LEVEL}/$item"
         if [ "${DRYRUN}" -eq 0 ]; then
           # ${recursive} unquoted on purpose: empty must contribute no argument. The key is quoted.
-          /usr/local/bin/aws s3 rm ${recursive}"${TOP_LEVEL}/${item}" --only-show-errors
+          "${AWS_BIN}" s3 rm ${recursive}"${TOP_LEVEL}/${item}" --only-show-errors
         fi
       fi
     done;
@@ -304,7 +313,7 @@ declare -a unrecognised
 declare -a rankable
 # Materialised before the loop: piping the listing straight into `for` swallows a failed
 # aws call as an empty result, and an empty result means "nothing to keep".
-if ! listing=$(/usr/local/bin/aws s3 ls "${TOP_LEVEL}/"); then
+if ! listing=$("${AWS_BIN}" s3 ls "${TOP_LEVEL}/"); then
   log "Refusing to continue: listing ${TOP_LEVEL}/ failed"
   exit 1
 fi
@@ -321,7 +330,8 @@ for s3Key in $(awk '{ print $NF }' <<< "${listing}"); do
   fi
   if [[ ! -z "${STOP_DATE}" &&  "${asDateS}" > "${STOP_DATE}" ]]; then
     afterStop+=("$s3Key")
-  elif [[ "${asDateS}" < "${weekly[0]}"  && "${asDateS}" > "${weekly[1]}" && "$(date -d "${asDateS}" +'%u')" != "$MATCH_DOW" ]]; then
+  # >= on the far edge so the weekly band owns END_WEEKLY outright; the monthly band starts below it.
+  elif [[ "${asDateS}" < "${weekly[0]}"  && ! "${asDateS}" < "${weekly[1]}" && "$(date -d "${asDateS}" +'%u')" != "$MATCH_DOW" ]]; then
     deleteWeeklyDates+=("${s3Key}")
   elif [[ "${asDateS}" < "${monthly[0]}"  && "${asDateS}" >  "${monthly[1]}" && "$(date -d "${asDateS}" +'%d')" != "01" ]]; then
     deleteMonthlyDates+=("${s3Key}")
