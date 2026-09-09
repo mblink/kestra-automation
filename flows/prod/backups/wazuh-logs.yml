@@ -11,9 +11,15 @@ description: |
 
   Discovery is narrowed to DeployStatus=active, not to NodeType=wazuh-docker alone. Both prodops02
   and prodops03 carry that NodeType, but only prodops02 runs the wazuh manager (pillar/prod/servers
-  gives it wazuh_roles server+dashboard, prodops03 indexer only), so it is the only host with a
-  /var/ossec/logs/alerts tree — fanning out to both would fail the sync on prodops03 and, if the
-  path ever existed there, would have two hosts overwrite each other's keys under one prefix.
+  gives it wazuh_roles server+dashboard, prodops03 indexer only), so it is the only host holding
+  alerts. Fanning out to both would fail the sync on prodops03, and two managers writing one prefix
+  would overwrite each other's keys.
+
+  The alerts are NOT at /var/ossec/logs/alerts on the host — that path does not exist there. The
+  manager runs in Docker against the named volume multi-node_master-wazuh-logs, mounted at
+  /var/ossec/logs inside the container. The task resolves the host-side mountpoint with
+  docker volume inspect rather than hardcoding /var/lib/docker/volumes/..., which embeds the
+  compose project name, and fails loudly if the directory is missing rather than syncing nothing.
 
 tasks:
   - id: discover_monitor_hosts
@@ -44,7 +50,13 @@ tasks:
           - |
             set -e
             echo "Backing up wazuh logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            sudo /usr/local/bin/aws s3 sync /var/ossec/logs/alerts s3://bondlink-data-east/ossec-logs/prod/ --only-show-errors
+            # The manager runs in Docker, so /var/ossec/logs exists only inside the container. Ask
+            # docker where the named volume lives rather than hardcoding a path under
+            # /var/lib/docker/volumes, which is a compose-project-name away from being wrong.
+            # jq, not --format: a Go template's braces collide with Pebble's own syntax.
+            alerts="$(sudo docker volume inspect multi-node_master-wazuh-logs | jq -r '.[0].Mountpoint')/alerts"
+            [ -d "$alerts" ] || { echo "no alerts directory at $alerts" >&2; exit 1; }
+            sudo /usr/local/bin/aws s3 sync "$alerts" s3://bondlink-data-east/ossec-logs/prod/ --only-show-errors
 
 triggers:
   - id: schedule
