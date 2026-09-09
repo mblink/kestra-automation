@@ -44,14 +44,16 @@ Usage: clean_database_backups.sh --bucket <bucket> --prefix <prefix> --retain <p
 USAGE
 }
 
+needValue() { [ $# -ge 2 ] || { echo "missing value for $1" >&2; usage >&2; exit 2; }; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --bucket) S3_BUCKET="$2"; shift 2 ;;
-    --prefix) S3_PREFIX="$2"; shift 2 ;;
-    --mode) MODE="$2"; shift 2 ;;
-    --retain) RETAIN="$2"; shift 2 ;;
-    --keep-days) KEEP_DAYS="$2"; shift 2 ;;
-    --max-stale-days) MAX_STALE_DAYS="$2"; shift 2 ;;
+    --bucket) needValue "$@"; S3_BUCKET="$2"; shift 2 ;;
+    --prefix) needValue "$@"; S3_PREFIX="$2"; shift 2 ;;
+    --mode) needValue "$@"; MODE="$2"; shift 2 ;;
+    --retain) needValue "$@"; RETAIN="$2"; shift 2 ;;
+    --keep-days) needValue "$@"; KEEP_DAYS="$2"; shift 2 ;;
+    --max-stale-days) needValue "$@"; MAX_STALE_DAYS="$2"; shift 2 ;;
     --live) DRYRUN=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -111,7 +113,9 @@ END_WEEKLY=$(date -d "${START_WEEKLY} - 1 years" +'%Y-%m-%d')
 START_MONTHLY=$(date -d "${END_WEEKLY} + 1 day" +'%Y-%m-%d')
 END_MONTHLY=$(date -d "now - 20 years" +'%Y-%m-%d')
 
-MATCH_DAY="Sunday"
+# %u, not %A: the day *name* is locale-dependent, so a non-English LC_TIME on the runner would
+# never match and every date in the weekly band would be deleted, Sundays included.
+MATCH_DOW=7
 # Save-guard: nothing dated after this is ever deleted, so it is the daily band's far edge.
 STOP_DATE="${START_WEEKLY}"
 declare -a weekly
@@ -129,6 +133,7 @@ assertReapingLifecycle() {
     [ .Rules[]
       | select(.Status == "Enabled")
       | . as $r
+      | select((($r.Filter.And // {}) | keys - ["Prefix"] | length) == 0)
       | (($r.Filter.Prefix // $r.Filter.And.Prefix // $r.Prefix // "")) as $rp
       | select($rp != "" and ($p | startswith($rp)))
     ] as $matched
@@ -283,7 +288,8 @@ maybeDeleteBackup() {
       else
         log "*** ${checkType} - $i/$totalKeys *** aws s3 rm ${recursive}${TOP_LEVEL}/$item"
         if [ "${DRYRUN}" -eq 0 ]; then
-          /usr/local/bin/aws s3 rm ${recursive}${TOP_LEVEL}/$item --only-show-errors
+          # ${recursive} unquoted on purpose: empty must contribute no argument. The key is quoted.
+          /usr/local/bin/aws s3 rm ${recursive}"${TOP_LEVEL}/${item}" --only-show-errors
         fi
       fi
     done;
@@ -296,7 +302,13 @@ declare -a saveDates
 declare -a afterStop
 declare -a unrecognised
 declare -a rankable
-for s3Key in $(/usr/local/bin/aws s3 ls "${TOP_LEVEL}/" | awk '{ print $NF }'); do
+# Materialised before the loop: piping the listing straight into `for` swallows a failed
+# aws call as an empty result, and an empty result means "nothing to keep".
+if ! listing=$(/usr/local/bin/aws s3 ls "${TOP_LEVEL}/"); then
+  log "Refusing to continue: listing ${TOP_LEVEL}/ failed"
+  exit 1
+fi
+for s3Key in $(awk '{ print $NF }' <<< "${listing}"); do
   asStampS=$(keyToStampS "${s3Key}")
   if [ -z "${asStampS}" ]; then
     unrecognised+=("${s3Key}")
@@ -309,9 +321,9 @@ for s3Key in $(/usr/local/bin/aws s3 ls "${TOP_LEVEL}/" | awk '{ print $NF }'); 
   fi
   if [[ ! -z "${STOP_DATE}" &&  "${asDateS}" > "${STOP_DATE}" ]]; then
     afterStop+=("$s3Key")
-  elif [[ "${asDateS}" < "${weekly[0]}"  && "${asDateS}" > "${weekly[1]}" && "$(date -d "${asDateS}" +'%A')" != "$MATCH_DAY" ]]; then
+  elif [[ "${asDateS}" < "${weekly[0]}"  && "${asDateS}" > "${weekly[1]}" && "$(date -d "${asDateS}" +'%u')" != "$MATCH_DOW" ]]; then
     deleteWeeklyDates+=("${s3Key}")
-  elif [[ "${asDateS}" < "${monthly[0]}"  && "${asDateS}" >  "${monthly[1]}" && "$(date -d ${asDateS} +'%d')" != "01" ]]; then
+  elif [[ "${asDateS}" < "${monthly[0]}"  && "${asDateS}" >  "${monthly[1]}" && "$(date -d "${asDateS}" +'%d')" != "01" ]]; then
     deleteMonthlyDates+=("${s3Key}")
   else
     saveDates+=("${s3Key}")
