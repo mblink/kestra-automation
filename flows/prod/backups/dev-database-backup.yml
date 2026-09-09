@@ -11,10 +11,6 @@ description: |
   Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck before
   relying on the exact trigger time.
 
-  NOTE: dev_bondlink_backup.sh sources /src/oddjob/mariadb/backup_lib.sh on the target
-  host, which is NOT part of this repo — that dependency must already exist on
-  proddbanalytics (as it does today for Rundeck) for this flow to succeed.
-
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
   the running image by inspecting the jar's bytecode, since Kestra's own docs page
