@@ -11,10 +11,6 @@ description: |
   Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck before
   relying on the exact trigger time.
 
-  NOTE: dev_bondlink_backup.sh sources /src/oddjob/mariadb/backup_lib.sh on the target
-  host, which is NOT part of this repo — that dependency must already exist on
-  proddbanalytics (as it does today for Rundeck) for this flow to succeed.
-
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
   the running image by inspecting the jar's bytecode, since Kestra's own docs page
@@ -49,7 +45,38 @@ tasks:
         cat > /tmp/dev_bondlink_backup.sh <<'BACKUP_SCRIPT'
         #!/usr/bin/env bash
         set -e
-        . /src/oddjob/mariadb/backup_lib.sh
+
+        IS_CLUSTER_MEMBER=$(myq "show status like 'wsrep_cluster_size'" | tail -1 | awk '{ print $NF }')
+        IS_REPLICA=
+        REPLICA_CHECK=$(myq "show slave status")
+        if test -z "${REPLICA_CHECK}"; then
+          IS_REPLICA=0
+        else
+          IS_REPLICA=1
+        fi
+
+        function desync {
+          if [ $IS_CLUSTER_MEMBER -gt 0 ]; then
+            myq "SET GLOBAL wsrep_desync = ON;"
+            myq "SET GLOBAL wsrep_on = OFF;"
+          elif [ $IS_REPLICA -eq 1 ]; then
+            myq "stop slave"
+          else
+            echo "Neither a cluster member or a replica, nothing to desync"
+          fi
+        }
+
+        function resync {
+          if [ $IS_CLUSTER_MEMBER -gt 0 ]; then
+            myq  "SET GLOBAL wsrep_on = ON;"
+            myq "SET GLOBAL wsrep_desync = OFF;"
+          elif [ $IS_REPLICA -eq 1 ]; then
+            myq "start slave"
+          else
+            echo "Neither a cluster member or a replica, nothing to resync"
+          fi
+        }
+
         declare -i CORES=0
         F_DATE=$(date '+%Y-%m-%d_%H-%M-%S')
         END_DAILY=$(date -d "now - 10 days" '+%Y-%m-%d')
