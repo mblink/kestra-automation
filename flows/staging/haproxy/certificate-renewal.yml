@@ -26,6 +26,10 @@ description: |
   reserved for flows fanning out over multiple discovered hosts (see
   backup-binary-logs.yml, bondlink-logs.yml, syslog-backup.yml).
 
+  UNVERIFIED SCHEDULE: this cron was converted from a Rundeck weekday='2' field under a
+  SUN=1 convention that was never confirmed. If the convention is wrong the renewal runs on the
+  wrong day. Confirm against a completed run before trusting it.
+
 tasks:
   - id: get_target_host
     type: io.kestra.plugin.aws.cli.AwsCLI

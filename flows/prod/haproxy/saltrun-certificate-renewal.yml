@@ -27,6 +27,10 @@ description: |
   {{ read('ensure_salt_perms.sh', namespace='shared') }} instead of being
   duplicated inline — shared with every other salt-run/salt-call flow in this repo.
 
+  UNVERIFIED SCHEDULE: this cron was converted from a Rundeck weekday='2' field under a
+  SUN=1 convention that was never confirmed. If the convention is wrong the renewal runs on the
+  wrong day. Confirm against a completed run before trusting it.
+
 tasks:
   - id: run_renewal
     type: io.kestra.plugin.fs.ssh.Command

@@ -12,6 +12,9 @@ description: |
   {{ read('ensure_salt_perms.sh', namespace='shared') }} instead of being
   duplicated inline — shared with every other salt-run/salt-call flow in this repo.
 
+  UNVERIFIED SCHEDULE: this cron was reconstructed, not carried over from a source schedule.
+  Confirm against a completed run before trusting it.
+
 tasks:
   - id: run_orchestration
     type: io.kestra.plugin.fs.ssh.Command

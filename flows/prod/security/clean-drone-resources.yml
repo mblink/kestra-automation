@@ -14,6 +14,8 @@ description: |
   trigger carries disabled: true. Replace it with a real intended schedule before
   enabling; run manually from the Kestra UI to test.
 
+  UNVERIFIED SCHEDULE: this cron is a reconstruction, not a carried-over source schedule.
+
 tasks:
   - id: discover_drone_hosts
     type: io.kestra.plugin.aws.cli.AwsCLI

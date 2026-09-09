@@ -15,6 +15,8 @@ description: |
   not a cadence anyone chose, and the trigger carries disabled: true. Pick a real
   schedule before enabling it.
 
+  UNVERIFIED SCHEDULE: this cron is a reconstruction, not a carried-over source schedule.
+
 tasks:
   - id: discover_monitor_hosts
     type: io.kestra.plugin.aws.cli.AwsCLI

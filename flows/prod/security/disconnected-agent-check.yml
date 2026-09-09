@@ -14,6 +14,8 @@ description: |
   wazuh/connect_agents.sh is inlined below (quoted heredoc) rather than pulled
   from Namespace Files — it's only used by this one flow.
 
+  UNVERIFIED SCHEDULE: this cron is a reconstruction, not a carried-over source schedule.
+
 tasks:
   - id: check_agents
     type: io.kestra.plugin.fs.ssh.Command
