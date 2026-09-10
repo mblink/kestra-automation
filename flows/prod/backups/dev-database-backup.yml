@@ -330,4 +330,3 @@ errors:
     subject: "Dev database backups failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}

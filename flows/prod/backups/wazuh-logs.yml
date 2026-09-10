@@ -55,7 +55,9 @@ tasks:
             # /var/lib/docker/volumes, which is a compose-project-name away from being wrong.
             # jq, not --format: a Go template's braces collide with Pebble's own syntax.
             alerts="$(sudo docker volume inspect multi-node_master-wazuh-logs | jq -r '.[0].Mountpoint')/alerts"
-            [ -d "$alerts" ] || { echo "no alerts directory at $alerts" >&2; exit 1; }
+            # sudo test, not [ -d ]: /var/lib/docker is drwx--x--- root:root, so bldeploy cannot
+            # traverse it and a bare test reports the directory missing.
+            sudo test -d "$alerts" || { echo "no alerts directory at $alerts" >&2; exit 1; }
             sudo /usr/local/bin/aws s3 sync "$alerts" s3://bondlink-data-east/ossec-logs/prod/ --only-show-errors
 
 triggers:
@@ -74,4 +76,3 @@ errors:
     subject: "Kestra[prod_cron] Wazuh Logs failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}

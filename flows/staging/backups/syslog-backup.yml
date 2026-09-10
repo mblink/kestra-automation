@@ -84,4 +84,3 @@ errors:
     subject: "Kestra[staging_cron] Syslog Backup failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}

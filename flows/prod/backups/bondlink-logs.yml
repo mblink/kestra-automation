@@ -91,4 +91,3 @@ errors:
     subject: "Kestra[prod_cron] BondLink Logs failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
