@@ -130,8 +130,7 @@ incident in the test's own comment.
   reference there is always a copy/paste mistake.
 
 Non-obvious and not statically checked: integer arithmetic derived from `nproc` needs a floor of 1 —
-`prodsalt-arm` is a 1-vCPU instance, and `wait -n` with zero background jobs exits 127
-(see `namespace-files/prod.aws/clean_corp_preview.sh`).
+`prodsalt-arm` is a 1-vCPU instance, and `wait -n` with zero background jobs exits 127.
 
 ## Secrets
 
