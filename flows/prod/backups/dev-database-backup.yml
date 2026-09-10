@@ -46,6 +46,10 @@ tasks:
         #!/usr/bin/env bash
         set -e
 
+        myq() {
+          sudo mariadb -e "$1"
+        }
+
         IS_CLUSTER_MEMBER=$(myq "show status like 'wsrep_cluster_size'" | tail -1 | awk '{ print $NF }')
         IS_REPLICA=
         REPLICA_CHECK=$(myq "show slave status")
