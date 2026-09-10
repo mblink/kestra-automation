@@ -46,6 +46,10 @@ tasks:
         #!/usr/bin/env bash
         set -e
 
+        myq() {
+          sudo mariadb -e "$1"
+        }
+
         IS_CLUSTER_MEMBER=$(myq "show status like 'wsrep_cluster_size'" | tail -1 | awk '{ print $NF }')
         IS_REPLICA=
         REPLICA_CHECK=$(myq "show slave status")
@@ -330,4 +334,4 @@ errors:
     subject: "Dev database backups failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}
