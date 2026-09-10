@@ -174,7 +174,7 @@ def test_no_literal_pebble_comment_start(flow, flow_path):
     # breaks parsing regardless of cause. Fix: move the script to a Namespace
     # File and pull it in via read() instead of inlining it - read()'s return
     # value is never re-parsed for template syntax, so it's immune (see
-    # clean-corp-preview-s3.yml / clean-production-db-backups.yml).
+    # clean-production-db-backups.yml).
     #
     # Scoped to tasks/errors/triggers only, not the top-level description -
     # Kestra doesn't Pebble-render description: (every flow already uses

@@ -20,7 +20,7 @@ description: |
   {{ read('syslogs.sh', namespace='shared') }}; and scripts that just need to
   avoid Kestra's Pebble template engine mis-parsing their content (e.g. bash's
   `${#array[@]}` length syntax contains a literal `{#`, which Pebble parses as
-  an unclosed comment — see clean-corp-preview-s3.yml) live under
+  an unclosed comment — see clean-production-db-backups.yml) live under
   namespace-files/prod.aws/, pulled in via {{ read('<file>') }} (no namespace=
   override needed since that's the calling flow's own namespace already).
 
