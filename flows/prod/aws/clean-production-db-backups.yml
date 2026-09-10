@@ -22,8 +22,8 @@ description: |
   {{ read('clean_database_backups.sh') }} (no namespace= override needed —
   read() defaults to the calling flow's own namespace) rather than being
   inlined directly. This isn't about sharing across flows — it's the fix for a
-  real production failure (see clean-corp-preview-s3.yml, which hit the exact
-  same bug): the script's `${#deleteKeys[@]}`-style bash array-length syntax
+  real production failure: the script's `${#deleteKeys[@]}`-style bash
+  array-length syntax
   contains a literal `{#`, which Kestra's Pebble template engine parses as the
   start of a *Pebble* comment (`{# ... #}`); since bash never emits a matching
   `#}`, Pebble scans to end-of-file still inside the "comment" and throws
