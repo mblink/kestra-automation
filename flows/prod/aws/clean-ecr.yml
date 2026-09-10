@@ -6,7 +6,7 @@ description: |
 
   Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated.
 
-  aws/clean_ecr.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow. Source of truth remains rundeck-jobs' aws/clean_ecr.sh. Source job called this with no args (live mode, not --dry-run).
+  aws/clean_ecr.sh lives in namespace-files/prod.aws/ and is pulled in via {{ read('clean_ecr.sh', namespace='prod.aws') }}. Source of truth remains rundeck-jobs' aws/clean_ecr.sh. Source job called this with no args (live mode, not --dry-run).
 
 tasks:
   - id: clean_ecr

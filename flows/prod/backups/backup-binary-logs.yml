@@ -30,8 +30,9 @@ description: |
   relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
   the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
 
-  binlog_backups.sh is inlined below (quoted heredoc) rather than pulled from
-  Namespace Files. Source of truth remains rundeck-jobs' databases/binlog_backups.sh.
+  binlog_backups.sh lives in namespace-files/prod.backups/ and is pulled in via
+  {{ read('binlog_backups.sh') }}. Source of truth remains rundeck-jobs'
+  databases/binlog_backups.sh.
 
 tasks:
   - id: discover_db_hosts
@@ -63,9 +64,7 @@ tasks:
             set -e
             echo "Backing up binary logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
             cat > /tmp/binlog_backups.sh <<'BINLOG_SCRIPT'
-            #!/usr/bin/env bash
-            CURRENT=$(sudo mariadb -e "show master status" | grep -v File | cut -f 1)
-            sudo /usr/local/bin/aws s3 sync /var/log/mysql/ "s3://bondlink-data-east/backups/mysql/binlogs/$(hostname)/" --exclude="*" --include="*bin*" --exclude="*index*" --exclude="${CURRENT}" --only-show-errors
+            {{ read('binlog_backups.sh') }}
             BINLOG_SCRIPT
             chmod +x /tmp/binlog_backups.sh
             sudo /tmp/binlog_backups.sh

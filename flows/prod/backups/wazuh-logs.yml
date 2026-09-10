@@ -50,15 +50,12 @@ tasks:
           - |
             set -e
             echo "Backing up wazuh logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            # The manager runs in Docker, so /var/ossec/logs exists only inside the container. Ask
-            # docker where the named volume lives rather than hardcoding a path under
-            # /var/lib/docker/volumes, which is a compose-project-name away from being wrong.
-            # jq, not --format: a Go template's braces collide with Pebble's own syntax.
-            alerts="$(sudo docker volume inspect multi-node_master-wazuh-logs | jq -r '.[0].Mountpoint')/alerts"
-            # sudo test, not [ -d ]: /var/lib/docker is drwx--x--- root:root, so bldeploy cannot
-            # traverse it and a bare test reports the directory missing.
-            sudo test -d "$alerts" || { echo "no alerts directory at $alerts" >&2; exit 1; }
-            sudo /usr/local/bin/aws s3 sync "$alerts" s3://bondlink-data-east/ossec-logs/prod/ --only-show-errors
+            cat > /tmp/wazuh_alerts_sync.sh <<'WAZUH_ALERTS_SCRIPT'
+            {{ read('wazuh_alerts_sync.sh') }}
+            WAZUH_ALERTS_SCRIPT
+            chmod +x /tmp/wazuh_alerts_sync.sh
+            /tmp/wazuh_alerts_sync.sh
+            rm -f /tmp/wazuh_alerts_sync.sh
 
 triggers:
   - id: schedule

@@ -59,24 +59,12 @@ tasks:
           - |
             set -e
             echo "Cleaning docker resources on {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
-            cleanImg() {
-              for img in $(
-                sudo docker images --filter "reference=668874212870.dkr.ecr.us-east-1.amazonaws.com/$1:build-*" \
-                  | awk '{ print $1":"$2 }' \
-                  | tail -n +2
-              ); do
-                sudo docker rmi "$img" || echo "Failed to remove $img"
-              done
-            }
-            cleanImg 'basex'
-            cleanImg 'drone-build-java-17'
-            cleanImg 'drone-cache'
-            cleanImg 'drone-ecr-auth'
-            sudo docker rmi $(sudo docker images -f 'dangling=true' -q) || echo 'No dangling images to remove'
-            sudo docker system prune --volumes --force
-            sudo docker network prune --force
-            sudo docker volume prune --all --force
+            cat > /tmp/clean_drone_docker.sh <<'CLEAN_DRONE_SCRIPT'
+            {{ read('clean_drone_docker.sh') }}
+            CLEAN_DRONE_SCRIPT
+            chmod +x /tmp/clean_drone_docker.sh
+            /tmp/clean_drone_docker.sh
+            rm -f /tmp/clean_drone_docker.sh
 
   - id: notify_success
     type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend

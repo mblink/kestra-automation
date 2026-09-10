@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Kestra flow content only** — flow YAML plus the shell/Python scripts those flows execute. It does
 not install or configure Kestra itself; that lives in the separate `salt` repo under `salt/kestra/`
 (the two repos' `SESSION_DEBRIEF.md` files are meant to be read together). Every script a flow runs
-is vendored here — inlined in the flow, or under `namespace-files/` and pulled in with `read()` — so
-this repo is self-contained at runtime. Flow `description:` fields name a Rundeck job and script
+is vendored here under `namespace-files/` and pulled in with `read()`, so this repo is
+self-contained at runtime and every script is reachable by ruff/shellcheck. Flow `description:` fields name a Rundeck job and script
 path; that is provenance only, and `mblink/rundeck-jobs` is not a source to consult.
 
 `SESSION_DEBRIEF.md` is a point-in-time migration snapshot, not living documentation: verify any
@@ -74,9 +74,12 @@ Only five task types are in use:
 - `io.kestra.plugin.core.flow.ForEach` — fan out over discovered hosts, with `concurrencyLimit:`.
 - `io.kestra.plugin.core.trigger.Schedule`.
 
-Getting a script onto the remote host: render it into a **quoted heredoc** inside the ssh command.
-`namespaceFiles:` on an `ssh.Command` task does nothing useful — it stages files into the Kestra
-worker's local working dir, not the remote host.
+Getting a script onto the remote host: render a namespace file into a **quoted heredoc** inside the
+ssh command. `namespaceFiles:` on an `ssh.Command` task does nothing useful — it stages files into
+the Kestra worker's local working dir, not the remote host. A Pebble expression cannot appear inside
+the script (`read()` output is never re-parsed as a template) — pass the value as a positional
+argument instead, and make it required: `sudo /tmp/x.sh "{{ fromJson(taskrun.value).Name }}"` with
+`host="${1:?usage: x.sh <host>}"` at the top of the script.
 
 ```yaml
 commands:
@@ -108,6 +111,11 @@ incident in the test's own comment.
 - **`/usr/local/bin/aws`, never bare `aws`**, in `ssh.Command` scripts and in `namespace-files/**/*.sh`.
   Kestra's non-interactive SSH session has `/usr/bin` on PATH but not `/usr/local/bin` → exit 127.
   `AwsCLI` tasks are exempt (bare `aws` is correct inside their container).
+- **An `ssh.Command`'s shell body lives in a namespace file**, not in the flow YAML. `ci/lint/lint.sh`
+  shellchecks `namespace-files/**/*.sh` and ruffs `**/*.py`; neither reads flow YAML, so an inlined
+  body is exempt from every linter — which is how a `$HOSTNAME` that shellcheck flags as SC3028
+  reached production. Each heredoc's body must be exactly one `{{ read(...) }}` call under a quoted
+  tag, and the YAML around it carries no shell expansion or control flow of its own.
 - **No literal `{#` in `tasks`/`errors`/`triggers`.** Kestra renders these through Pebble, which reads
   `{#` as a comment start; bash's `${#arr[@]}` length syntax therefore fails at *execution* time with
   `ParserException: Unclosed comment`. Fix by moving the script to a namespace file — `read()`'s

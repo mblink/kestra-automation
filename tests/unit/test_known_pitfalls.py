@@ -17,6 +17,17 @@ BAD_AWS_TAG_CASING = re.compile(r"Values=Staging\b|Values=Prod\b")
 NOTIFICATION_TYPE_MARKER = "notifications."
 BARE_AWS_INVOCATION = re.compile(r"(?:^|[|;`]|\$\()\s*aws\b")
 HOSTNAME_SHELL_VARIABLE = re.compile(r"\$\{?HOSTNAME\b")
+HEREDOC_OPEN = re.compile(
+    r"<<-?[ \t]*(?:'(?P<sq>[A-Za-z_][A-Za-z0-9_]*)'"
+    r"|\"(?P<dq>[A-Za-z_][A-Za-z0-9_]*)\""
+    r"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))"
+)
+READ_CALL = re.compile(r"^\{\{\s*read\(.*\)\s*\}\}$")
+SHELL_EXPANSION = re.compile(r"\$[\w({@?*#!-]|`")
+SHELL_STRUCTURE = re.compile(
+    r"^\s*(?:if|then|elif|else|fi|for|while|until|do|done|case|esac|select|function)\b"
+    r"|^\s*[A-Za-z_]\w*\s*\(\)"
+)
 
 
 def test_no_bare_taskrun_value_field_access(flow, flow_path):
@@ -218,3 +229,78 @@ def test_namespace_file_scripts_do_not_use_hostname_shell_variable(script_path):
         f"{script_path}: $HOSTNAME is empty under zsh and dash, silently "
         f"collapsing every host onto one S3 key - use $(hostname)"
     )
+
+
+def _partition_heredocs(command):
+    """Split one command string into the lines outside any heredoc body and the
+    heredoc bodies themselves, as (tag, tag_was_quoted, body_lines) triples.
+    The opener and terminator lines count as outside."""
+    outside, heredocs, lines, i = [], [], command.splitlines(), 0
+    while i < len(lines):
+        outside.append(lines[i])
+        match = HEREDOC_OPEN.search(lines[i])
+        i += 1
+        if not match:
+            continue
+        tag = match.group("sq") or match.group("dq") or match.group("bare")
+        body = []
+        while i < len(lines) and lines[i].strip() != tag:
+            body.append(lines[i])
+            i += 1
+        heredocs.append((tag, match.group("bare") is None, body))
+        if i < len(lines):
+            outside.append(lines[i])
+            i += 1
+    return outside, heredocs
+
+
+def test_ssh_command_shell_bodies_live_in_namespace_files(flow, flow_path):
+    # A real production data loss, and the reason the two $HOSTNAME tests above
+    # exist: suricata.yml keyed an S3 prefix on $HOSTNAME inline in the flow,
+    # and every gate that would have caught it reads files, not YAML -
+    # ci/lint/lint.sh shellchecks namespace-files/**/*.sh and nothing else, so
+    # shellcheck's own SC3028 (HOSTNAME is undefined in POSIX sh) never saw the
+    # line that collapsed three staging hosts onto one key. An inlined body is
+    # invisible to shellcheck (and an inlined .py to ruff) for as long as it
+    # lives in the YAML, so the fix is structural: the shell reaches the remote
+    # host as a quoted heredoc whose entire content is a read() of a namespace
+    # file, and the YAML around it carries no shell logic of its own.
+    #
+    # Three things are checked, and every failure has a fix rather than a
+    # suppression: an unquoted heredoc tag (the remote shell would expand the
+    # script's own $vars while writing it), a heredoc body that is anything but
+    # a read() call (an inlined script), and a shell expansion or control-flow
+    # construct outside a heredoc (logic that belongs in the script). A body
+    # that interpolates a Pebble expression is not an exception - read() output
+    # is never re-parsed as a template, so the value is passed to the script as
+    # a positional argument and the interpolation stays in the YAML, where
+    # Pebble evaluates it.
+    for task in find_tasks_of_type(flow, "io.kestra.plugin.fs.ssh.Command"):
+        for command in task.get("commands", []):
+            outside, heredocs = _partition_heredocs(command)
+            for tag, quoted, body in heredocs:
+                assert quoted, (
+                    f"{flow_path}: ssh.Command task '{task.get('id')}' opens "
+                    f"heredoc {tag} unquoted - write <<'{tag}' so the remote "
+                    f"shell does not expand the script while writing it"
+                )
+                content = [line.strip() for line in body if line.strip()]
+                assert len(content) == 1 and READ_CALL.match(content[0]), (
+                    f"{flow_path}: ssh.Command task '{task.get('id')}' inlines "
+                    f"a script in heredoc {tag} - no linter can see it there. "
+                    f"Move it to namespace-files/ and pull it in with "
+                    f"{{{{ read('<file>') }}}}"
+                )
+            for line in outside:
+                assert not SHELL_EXPANSION.search(line), (
+                    f"{flow_path}: ssh.Command task '{task.get('id')}' expands "
+                    f"a shell variable outside a heredoc, where shellcheck "
+                    f"cannot read it - move the line into a namespace file: "
+                    f"{line!r}"
+                )
+                assert not SHELL_STRUCTURE.match(line), (
+                    f"{flow_path}: ssh.Command task '{task.get('id')}' has "
+                    f"shell control flow outside a heredoc, where shellcheck "
+                    f"cannot read it - move it into a namespace file: "
+                    f"{line!r}"
+                )

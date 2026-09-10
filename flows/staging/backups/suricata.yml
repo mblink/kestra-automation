@@ -46,7 +46,12 @@ tasks:
           - |
             set -e
             echo "Syncing suricata logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            /usr/local/bin/aws s3 sync /var/log/suricata/ "s3://bondlink-data-east/suricata-logs/$(hostname)/" --exclude="*" --include="*.gz" --only-show-errors
+            cat > /tmp/suricata_sync.sh <<'SURICATA_SYNC_SCRIPT'
+            {{ read('suricata_sync.sh') }}
+            SURICATA_SYNC_SCRIPT
+            chmod +x /tmp/suricata_sync.sh
+            /tmp/suricata_sync.sh
+            rm -f /tmp/suricata_sync.sh
 
 triggers:
   - id: schedule

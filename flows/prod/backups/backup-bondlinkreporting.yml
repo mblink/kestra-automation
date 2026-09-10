@@ -35,8 +35,12 @@ tasks:
     commands:
       - |
         set -e
-        output=$(sudo salt proddbanalytics mariadb_backup.single_backup BondLinkReporting --out=json)
-        echo "$output" | jq -e '.[] | select(.success == true)'
+        cat > /tmp/backup_bondlinkreporting.sh <<'BONDLINKREPORTING_SCRIPT'
+        {{ read('backup_bondlinkreporting.sh') }}
+        BONDLINKREPORTING_SCRIPT
+        chmod +x /tmp/backup_bondlinkreporting.sh
+        /tmp/backup_bondlinkreporting.sh
+        rm -f /tmp/backup_bondlinkreporting.sh
 
 triggers:
   - id: schedule
