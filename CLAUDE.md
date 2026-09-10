@@ -37,8 +37,8 @@ Local Kestra: `docker-compose up` after copying `.env.example` to `.env` (gitign
 `KESTRA_SECRET_KEY` / `SECRET_*` values. `make sync` (`kestra-sync-flows.sh`) only works on the
 production Kestra host, not locally.
 
-CI: `.github/workflows/pytest.yml` (`make setup` + `make test`) on PRs, plus `.woodpecker.yml`
-(arm64-only, `lint` + `run-unit-tests` + a failure-only mail step).
+CI: `.woodpecker.yml` (arm64-only, `lint` + `run-unit-tests` + a failure-only mail step) is the
+only pipeline — there is no `.github/` directory.
 
 ## Layout and naming rules (enforced by tests)
 

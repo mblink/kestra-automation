@@ -22,13 +22,16 @@ description: |
   relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
   the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
 
-  Both scripts live in namespace-files/prod.backups/ and are pulled into quoted
-  heredocs via {{ read(...) }}, so nothing is expanded by the outer shell. Source of
-  truth for both remains rundeck-jobs' databases/dev_bondlink_backup.sh and
-  aws/delete_versions.sh — if those change, this flow needs a matching manual update.
+  dev_bondlink_backup.sh lives in namespace-files/prod.backups/ and is pulled into a
+  quoted heredoc via {{ read(...) }}, so nothing is expanded by the outer shell. Source
+  of truth remains rundeck-jobs' databases/dev_bondlink_backup.sh — if that changes,
+  this flow needs a matching manual update.
+
+  Retention is the bucket's own business: the bondlink-data-east-devbackups-expiration
+  lifecycle rule expires backups/mysql/us-east-1/devbackups after 30 days.
 
 tasks:
-  - id: backup_and_prune
+  - id: backup
     type: io.kestra.plugin.fs.ssh.Command
     host: proddbanalytics.bondlink.vpc
     port: "2007"
@@ -44,14 +47,7 @@ tasks:
         BACKUP_SCRIPT
         chmod +x /tmp/dev_bondlink_backup.sh
         bash +x /tmp/dev_bondlink_backup.sh
-
-        cat > /tmp/delete_versions.sh <<'PRUNE_SCRIPT'
-        {{ read('delete_versions.sh') }}
-        PRUNE_SCRIPT
-        chmod +x /tmp/delete_versions.sh
-        bash +x /tmp/delete_versions.sh -r us-east-1 -b bondlink-data-east -p "backups/mysql/us-east-2/devbackups" -d 10 -f
-
-        rm -f /tmp/dev_bondlink_backup.sh /tmp/delete_versions.sh
+        rm -f /tmp/dev_bondlink_backup.sh
 
 triggers:
   - id: schedule
