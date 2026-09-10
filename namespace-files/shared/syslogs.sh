@@ -9,5 +9,5 @@ if [ -z "$(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::')" ]; the
   exit 0
 fi
 for f in $(find . -maxdepth 1 -name "*${FILE_MATCH}*.gz" | sed s':./::'); do
-  sudo /usr/local/bin/aws s3 cp ${f} s3://bondlink-data-east/syslogs/${HOSTNAME}/${FOLDER}/${f} --only-show-errors
+  sudo /usr/local/bin/aws s3 cp "${f}" "s3://bondlink-data-east/syslogs/$(hostname)/${FOLDER}/${f}" --only-show-errors
 done

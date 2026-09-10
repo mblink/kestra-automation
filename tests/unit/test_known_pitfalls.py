@@ -16,6 +16,7 @@ BAD_SHEBANG_LINES = {"#!/usr/bin/env python3", "#!/usr/bin/env python"}
 BAD_AWS_TAG_CASING = re.compile(r"Values=Staging\b|Values=Prod\b")
 NOTIFICATION_TYPE_MARKER = "notifications."
 BARE_AWS_INVOCATION = re.compile(r"(?:^|[|;`]|\$\()\s*aws\b")
+HOSTNAME_SHELL_VARIABLE = re.compile(r"\$\{?HOSTNAME\b")
 
 
 def test_no_bare_taskrun_value_field_access(flow, flow_path):
@@ -180,3 +181,40 @@ def test_no_literal_pebble_comment_start(flow, flow_path):
             f"a Namespace File and pull it in via read() instead of inlining "
             f"it: {value!r}"
         )
+
+
+def test_no_hostname_shell_variable(flow, flow_path):
+    # A real production data loss: suricata.yml keyed its S3 destination on
+    # $HOSTNAME, which is empty in these sessions, so all three staging hosts
+    # wrote to the single key prefix `suricata-logs//` and each day's upload
+    # overwrote the previous host's. Verified on a live host: bldeploy's login
+    # shell is zsh, ssh.Command runs `zsh -c '<command>'`, and zsh does not set
+    # HOSTNAME (it uses $HOST). dash does not set it either, so a `#!/bin/sh`
+    # script is equally exposed. Only bash sets it - which is the sole reason
+    # backup-binary-logs.yml and syslogs.sh worked, since both happen to run
+    # their body as a `#!/usr/bin/env bash` script. That makes every such use a
+    # shebang change away from silently collapsing a whole fleet's logs onto one
+    # key. `$(hostname)` invokes /usr/bin/hostname and yields the same value in
+    # any shell.
+    for value in iter_strings(flow):
+        assert not HOSTNAME_SHELL_VARIABLE.search(value), (
+            f"{flow_path}: $HOSTNAME is empty under zsh and dash, silently "
+            f"collapsing every host onto one S3 key - use $(hostname): "
+            f"{value!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    "script_path",
+    _discover_namespace_file_scripts(),
+    ids=lambda p: str(p.relative_to(REPO_ROOT)),
+)
+def test_namespace_file_scripts_do_not_use_hostname_shell_variable(script_path):
+    # Same bug as test_no_hostname_shell_variable, against the scripts that
+    # never appear as literal text in a flow because they are pulled in with
+    # read() - the same split as the two bare-`aws` tests above.
+    content = script_path.read_text()
+    assert not HOSTNAME_SHELL_VARIABLE.search(content), (
+        f"{script_path}: $HOSTNAME is empty under zsh and dash, silently "
+        f"collapsing every host onto one S3 key - use $(hostname)"
+    )
