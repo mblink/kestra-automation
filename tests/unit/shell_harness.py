@@ -83,7 +83,17 @@ def run_pruner(tmp_path, listing, *args, lifecycle=REAPING_LIFECYCLE, versions=N
     deletes.touch()
 
     listing_file = tmp_path / "listing"
-    listing_file.write_text("".join(f"                           PRE {k}\n" for k in listing))
+    # `aws s3 ls` renders a prefix and an object differently, and the pruner reads both with one
+    # `awk '{ print $NF }'`. Rendering an object key as a PRE line would hide a future change to
+    # that parse, so the shape here follows the trailing slash the way the real CLI does.
+    listing_file.write_text(
+        "".join(
+            f"                           PRE {k}\n"
+            if k.endswith("/")
+            else f"2026-09-11 07:38:35   15032385536 {k}\n"
+            for k in listing
+        )
+    )
     lifecycle_file = tmp_path / "lifecycle"
     lifecycle_file.write_text(json.dumps(lifecycle))
     versions_file = tmp_path / "versions"

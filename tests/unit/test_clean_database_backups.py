@@ -176,3 +176,45 @@ def test_a_non_sunday_on_the_weekly_far_edge_is_still_deletable(tmp_path):
     )
     assert rc == 0, out
     assert any("2024-09-09" in d for d in deletions), f"kept a Monday inside the weekly band: {out}"
+
+
+def test_a_compressed_backup_is_recognised_and_pruned_like_its_directory(tmp_path):
+    """ship_phase writes <stamp>.7z where it used to write <stamp>/. The stamp recogniser is
+    anchored on the stamp alone, so both shapes must land in the same band -- a .7z the pruner
+    called unrecognised would accumulate forever under a prefix that carries no expiry rule."""
+    old = "2019-01-02_00-00-00"
+    rc, out, deletions = run_pruner(
+        tmp_path, [f"{old}.7z", f"{DAY}.7z"],
+        "--bucket", "bondlink-data-east", "--prefix", "backups/mysql/bondlink-us-east-1",
+        "--retain", "banded", "--mode", "marker", "--live",
+    )
+    assert rc == 0, out
+    assert any(f"{old}.7z" in d for d in deletions), f"an archive was not pruned: {out}"
+    assert not any(f"{DAY}.7z" in d for d in deletions), f"pruned a recent archive: {deletions}"
+
+
+def test_an_archive_is_deleted_as_one_object_not_recursively(tmp_path):
+    """--recursive is chosen by a trailing slash. Passing it for an object key makes `aws s3 rm`
+    treat the key as a prefix, which matches nothing and silently deletes neither."""
+    old = "2019-01-02_00-00-00"
+    rc, out, deletions = run_pruner(
+        tmp_path, [f"{old}.7z", f"{old}/"],
+        "--bucket", "bondlink-data-east", "--prefix", "backups/mysql/bondlink-us-east-1",
+        "--retain", "banded", "--mode", "marker", "--live",
+    )
+    assert rc == 0, out
+    archive_deletes = [d for d in deletions if ".7z" in d]
+    assert archive_deletes, f"the archive was not deleted at all: {out}"
+    assert not any("--recursive" in d for d in archive_deletes), archive_deletes
+
+
+def test_a_directory_backup_is_still_deleted_recursively(tmp_path):
+    """Guard on the legacy shape: dropping --recursive there leaves every object in place while
+    the command still reports success."""
+    rc, out, deletions = run_pruner(
+        tmp_path, ["2019-01-02_00-00-00/"],
+        "--bucket", "bondlink-data-east", "--prefix", "backups/mysql/bondlink-us-east-1",
+        "--retain", "banded", "--mode", "marker", "--live",
+    )
+    assert rc == 0, out
+    assert any("--recursive" in d for d in deletions), f"no recursive delete issued: {deletions}"
