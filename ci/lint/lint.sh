@@ -7,9 +7,10 @@
 # `read()`/execute via ssh.Command (namespace-files/**/*.sh).
 #
 # ALL linters are BLOCKING. The mode arg only selects WHICH linters run:
-#   all   -> ruff + shellcheck (default)
+#   all   -> ruff + shellcheck + ssh-commands (default)
 #   py    -> only ruff
 #   shell -> only shellcheck
+#   ssh   -> only the ssh.Command commands: gate
 #
 # Exit status is the number of checks that reported problems.
 set -uo pipefail
@@ -67,11 +68,21 @@ run_shell() {
   run_linted '*.sh' shellcheck --severity=warning -f gcc || fails=$((fails + 1))
 }
 
+run_ssh_commands() {
+  hr "shellcheck (ssh.Command commands: blocks)"
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "shellcheck not installed -- it is required (baked into the CI image)" >&2
+    exit 2
+  fi
+  python3 ci/lint/check_ssh_commands.py || fails=$((fails + 1))
+}
+
 case "$MODE" in
-  all) run_py; run_shell ;;
+  all) run_py; run_shell; run_ssh_commands ;;
   py) run_py ;;
   shell) run_shell ;;
-  *) echo "usage: lint.sh [all|py|shell]"; exit 2 ;;
+  ssh) run_ssh_commands ;;
+  *) echo "usage: lint.sh [all|py|shell|ssh]"; exit 2 ;;
 esac
 
 printf '\n=== lint(%s) summary: %d check(s) reported problems ===\n' "$MODE" "$fails"

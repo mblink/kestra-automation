@@ -59,7 +59,7 @@ tasks:
           - |
             set -e
             echo "Cleaning docker resources on {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            sudo docker rmi $(sudo docker images | grep '/bondlink' | awk '{print $3}') || echo 'No application images to remove'
+            sudo docker images | grep '/bondlink' | awk '{print $3}' | xargs -r sudo docker rmi || echo 'Some application images could not be removed'
             cleanImg() {
               for img in $(
                 sudo docker images --filter "reference=668874212870.dkr.ecr.us-east-1.amazonaws.com/$1:build-*" \
@@ -73,7 +73,7 @@ tasks:
             cleanImg 'drone-build-java-17'
             cleanImg 'drone-cache'
             cleanImg 'drone-ecr-auth'
-            sudo docker rmi $(sudo docker images -f 'dangling=true' -q) || echo 'No dangling images to remove'
+            sudo docker images -f 'dangling=true' -q | xargs -r sudo docker rmi || echo 'Some dangling images could not be removed'
             sudo docker system prune --volumes --force
             sudo docker network prune --force
             sudo docker volume prune --all --force
