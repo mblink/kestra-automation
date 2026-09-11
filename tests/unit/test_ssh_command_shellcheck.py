@@ -7,7 +7,6 @@ when its own extraction breaks.
 """
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -20,7 +19,8 @@ def run(root=None):
     cmd = [sys.executable, str(CHECKER)]
     if root:
         cmd += ["--root", str(root)]
-    return subprocess.run(cmd, cwd=root or REPO_ROOT, capture_output=True, text=True)
+    return subprocess.run(cmd, cwd=root or REPO_ROOT, capture_output=True, text=True,
+                          check=False)
 
 
 def test_repo_is_clean():

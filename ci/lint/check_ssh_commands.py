@@ -24,7 +24,7 @@ import yaml
 SSH_COMMAND = "io.kestra.plugin.fs.ssh.Command"
 # Pebble is evaluated before the shell ever sees the text, so it is not shell and must
 # not be parsed as shell. Newlines are preserved so reported line numbers stay true.
-PEBBLE = re.compile(r"\{\{.*?\}\}", re.S)
+PEBBLE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 
 
 def tasks(node):
@@ -63,7 +63,7 @@ def main():
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[2]
     listed = subprocess.run(
         ["git", "ls-files", "-z", "--", "flows/*.yml", "flows/*.yaml"],
-        cwd=root, capture_output=True, text=True,
+        cwd=root, capture_output=True, text=True, check=False,
     )
     if listed.returncode != 0:
         print("error: git ls-files failed -- gate NOT run", file=sys.stderr)
@@ -86,7 +86,7 @@ def main():
             snippet.write_text("#!/bin/sh\n" + body + "\n")
             out = subprocess.run(
                 ["shellcheck", f"--severity={args.severity}", "-f", "gcc", str(snippet)],
-                capture_output=True, text=True,
+                capture_output=True, text=True, check=False,
             ).stdout
             for line in out.splitlines():
                 # gcc format is path:line:col: sev: message. The path is the temp
