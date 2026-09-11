@@ -73,7 +73,7 @@ def test_database_name_with_underscore_is_recognised(tmp_path):
         "--retain", "banded", "--mode", "marker", "--live",
     )
     assert rc == 0, out
-    assert "1 unrecognised" not in out and "unrecognised: 1" not in out, out
+    assert "Unrecognised (never deleted): 0" in out, out
     assert any(old in d for d in deletions), f"an underscore name was not pruned: {out}"
 
 
@@ -186,7 +186,7 @@ def test_a_compressed_backup_is_recognised_and_pruned_like_its_directory(tmp_pat
     rc, out, deletions = run_pruner(
         tmp_path, [f"{old}.7z", f"{DAY}.7z"],
         "--bucket", "bondlink-data-east", "--prefix", "backups/mysql/bondlink-us-east-1",
-        "--retain", "banded", "--mode", "marker", "--live",
+        "--retain", "banded", "--mode", "marker", "--live", env=PINNED_TODAY,
     )
     assert rc == 0, out
     assert any(f"{old}.7z" in d for d in deletions), f"an archive was not pruned: {out}"
@@ -218,3 +218,72 @@ def test_a_directory_backup_is_still_deleted_recursively(tmp_path):
     )
     assert rc == 0, out
     assert any("--recursive" in d for d in deletions), f"no recursive delete issued: {deletions}"
+
+
+# ---------------------------------------------------------------------------
+# --mode version. A <stamp>/ prefix is delimiter-bounded, so every key it matches belongs to
+# that backup. A <stamp>.7z key is not, so the same listing also returns any sibling that
+# merely begins with it -- and version mode deletes permanently, past the bucket's own
+# versioning safety net.
+# ---------------------------------------------------------------------------
+OLD = "2019-01-02_00-00-00"
+VERSION_PREFIX = "backups/mysql/bondlink-us-east-1"
+
+
+def _version_args(*extra):
+    return (
+        "--bucket", "bondlink-data-east", "--prefix", VERSION_PREFIX,
+        "--retain", "banded", "--mode", "version", "--live", *extra,
+    )
+
+
+def _versions(*keys):
+    return {
+        "Versions": [
+            {"Key": k, "VersionId": f"v{i}", "Size": 10} for i, k in enumerate(keys)
+        ],
+        "DeleteMarkers": [],
+    }
+
+
+def test_version_mode_deletes_only_the_archive_it_named(tmp_path):
+    """The sibling keys here are what an eventual multi-volume or checksum artifact would
+    look like. `list-object-versions --prefix <stamp>.7z` returns all three."""
+    archive = f"{VERSION_PREFIX}/{OLD}.7z"
+    rc, out, deletions = run_pruner(
+        tmp_path, [f"{OLD}.7z"], *_version_args(),
+        versions={archive: _versions(archive, f"{archive}.001", f"{archive}.sha256")},
+        env=PINNED_TODAY,
+    )
+    assert rc == 0, out
+    assert "removed 1 version(s)" in out, out
+    assert deletions == ["DELETE_OBJECTS"], deletions
+
+
+def test_version_mode_sweeps_everything_under_a_directory_backup(tmp_path):
+    """The complement: bounding the archive case must not turn the directory case into a
+    one-object delete, which would leave the other 800 objects of that backup behind."""
+    prefix = f"{VERSION_PREFIX}/{OLD}/"
+    rc, out, deletions = run_pruner(
+        tmp_path, [f"{OLD}/"], *_version_args(),
+        versions={prefix: _versions(f"{prefix}ibdata1", f"{prefix}mysql/user.frm")},
+        env=PINNED_TODAY,
+    )
+    assert rc == 0, out
+    assert "removed 2 version(s)" in out, out
+    assert deletions == ["DELETE_OBJECTS"], deletions
+
+
+def test_version_dry_run_previews_the_same_bounded_set(tmp_path):
+    """A dry run that counts more than the live run would delete is not a preview."""
+    archive = f"{VERSION_PREFIX}/{OLD}.7z"
+    rc, out, deletions = run_pruner(
+        tmp_path, [f"{OLD}.7z"],
+        "--bucket", "bondlink-data-east", "--prefix", VERSION_PREFIX,
+        "--retain", "banded", "--mode", "version",
+        versions={archive: _versions(archive, f"{archive}.001")},
+        env=PINNED_TODAY,
+    )
+    assert rc == 0, out
+    assert deletions == [], f"a dry run deleted: {deletions}"
+    assert "1 version(s)" in out, out
