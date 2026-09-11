@@ -239,7 +239,7 @@ tasks:
         REGION="us-east-1"
         PREFIX="backups/mysql/us-east-1/devbackups"
         tar cf bondlink_dev_backup_${F_DATE}.tar BondLink_schema.sql BondLink_data.sql BondLink_triggers.sql BondLink_restore.sh
-        /usr/bin/zstd -14 --no-progress -T${CORES} bondlink_dev_backup_${F_DATE}.tar
+        /usr/bin/zstd -12 --no-progress -T${CORES} bondlink_dev_backup_${F_DATE}.tar
         sudo /usr/local/bin/aws s3 cp bondlink_dev_backup_${F_DATE}.tar.zst s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst --only-show-errors
         echo s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst
         cd $CWD

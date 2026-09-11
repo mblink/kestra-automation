@@ -46,7 +46,18 @@ case "$1 $2" in
     cat "$LIFECYCLE"
     ;;
   "s3api list-object-versions")
-    cat "$VERSIONS"
+    # Answer per --prefix, not one canned response for every call: a stub that ignores the
+    # prefix cannot tell "deleted the right key" from "deleted the wrong one", which is the
+    # only thing a version-mode test is for.
+    prefix=
+    while [ $# -gt 0 ]; do
+      case "$1" in --prefix) prefix="$2"; shift 2 ;; *) shift ;; esac
+    done
+    if [ -f "$VERSIONS_DIR/$(printf '%s' "$prefix" | tr '/' '_')" ]; then
+      cat "$VERSIONS_DIR/$(printf '%s' "$prefix" | tr '/' '_')"
+    else
+      cat "$VERSIONS_DIR/__default__"
+    fi
     ;;
   "s3api delete-objects")
     printf 'DELETE_OBJECTS\n' >> "$DELETES"
@@ -83,11 +94,30 @@ def run_pruner(tmp_path, listing, *args, lifecycle=REAPING_LIFECYCLE, versions=N
     deletes.touch()
 
     listing_file = tmp_path / "listing"
-    listing_file.write_text("".join(f"                           PRE {k}\n" for k in listing))
+    # `aws s3 ls` renders a prefix and an object differently, and the pruner reads both with one
+    # `awk '{ print $NF }'`. Rendering an object key as a PRE line would hide a future change to
+    # that parse, so the shape here follows the trailing slash the way the real CLI does.
+    listing_file.write_text(
+        "".join(
+            f"                           PRE {k}\n"
+            if k.endswith("/")
+            else f"2026-09-11 07:38:35   15032385536 {k}\n"
+            for k in listing
+        )
+    )
     lifecycle_file = tmp_path / "lifecycle"
     lifecycle_file.write_text(json.dumps(lifecycle))
-    versions_file = tmp_path / "versions"
-    versions_file.write_text(json.dumps(versions or {"Versions": [], "DeleteMarkers": []}))
+    # `versions` is either one response used for every prefix, or a {prefix: response} map
+    # so a test can assert which keys a version-mode delete actually reaches.
+    versions_dir = tmp_path / "versions"
+    versions_dir.mkdir(exist_ok=True)
+    empty = {"Versions": [], "DeleteMarkers": []}
+    if isinstance(versions, dict) and not ({"Versions", "DeleteMarkers"} & set(versions)):
+        (versions_dir / "__default__").write_text(json.dumps(empty))
+        for prefix, response in versions.items():
+            (versions_dir / prefix.replace("/", "_")).write_text(json.dumps(response))
+    else:
+        (versions_dir / "__default__").write_text(json.dumps(versions or empty))
 
     _write_exec(bin_dir / "aws", AWS_STUB)
 
@@ -102,7 +132,7 @@ def run_pruner(tmp_path, listing, *args, lifecycle=REAPING_LIFECYCLE, versions=N
         "DELETES": str(deletes),
         "LISTING": str(listing_file),
         "LIFECYCLE": str(lifecycle_file),
-        "VERSIONS": str(versions_file),
+        "VERSIONS_DIR": str(versions_dir),
         "LS_FAILS": "1" if ls_fails else "",
         "FAKE_TODAY": "",
         **(env or {}),
