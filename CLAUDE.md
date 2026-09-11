@@ -27,7 +27,7 @@ Single test / single flow:
 
 ```
 ./.venv/bin/pytest tests/unit/test_known_pitfalls.py::test_no_literal_pebble_comment_start
-./.venv/bin/pytest -k "clean-ecr"       # every check for one flow (test ids are flow paths)
+./.venv/bin/pytest -k "clean-basex"     # every check for one flow (test ids are flow paths)
 ```
 
 `bash ci/lint/lint.sh py|shell` scopes the lint gate. `ci/lint/lint.sh` treats an empty file list as
@@ -43,8 +43,9 @@ only pipeline — there is no `.github/` directory.
 ## Layout and naming rules (enforced by tests)
 
 - `flows/<env>/<group>/<flow-id>.yml` — `id:` must equal the filename stem and `namespace:` must
-  equal the dot-joined directory path under `flows/` (`flows/prod/aws/clean-ecr.yml` →
-  `id: clean-ecr`, `namespace: prod.aws`). Group directories mirror the source Rundeck `<group>` tag.
+  equal the dot-joined directory path under `flows/` (`flows/prod/aws/clean-basex-backups.yml` →
+  `id: clean-basex-backups`, `namespace: prod.aws`). Group directories mirror the source Rundeck
+  `<group>` tag.
 - `namespace-files/<namespace>/` — files synced into that Kestra namespace. `shared/` holds scripts
   used by more than one flow or shared across environments (read with
   `{{ read('x.sh', namespace='shared') }}`); a per-namespace dir like `prod.aws/` holds
@@ -138,8 +139,7 @@ incident in the test's own comment.
   reference there is always a copy/paste mistake.
 
 Non-obvious and not statically checked: integer arithmetic derived from `nproc` needs a floor of 1 —
-`prodsalt-arm` is a 1-vCPU instance, and `wait -n` with zero background jobs exits 127
-(see `namespace-files/prod.aws/clean_corp_preview.sh`).
+`prodsalt-arm` is a 1-vCPU instance, and `wait -n` with zero background jobs exits 127.
 
 ## Secrets
 

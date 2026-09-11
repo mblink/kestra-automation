@@ -72,8 +72,8 @@ keysByYearMonth="$(
 for yearMonth in "${yearMonthsToDelete[@]}"; do
   backupsToDelete="$(
     jq '
-      # Get backups from the given year/month
-      .["'$yearMonth'"]
+      # Get backups from the given year/month, force array if null
+      (.["'$yearMonth'"] // [])
       # Sort them so the latest appear at the end
       | sort
       # Drop the last one (we keep the most recent backup from the year/month)
