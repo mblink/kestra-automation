@@ -22,16 +22,16 @@ description: |
   relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
   the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
 
-  Shared scripts are inlined below (quoted heredoc delimiters, so nothing is expanded
-  by the outer shell) rather than pulled from Namespace Files — simpler than standing
-  up a separate namespace-files sync mechanism, at the cost of duplicating the script
-  body anywhere else it's reused (e.g. delete_versions.sh also appears in other
-  Backups flows with different args). Source of truth for both scripts remains
-  rundeck-jobs' databases/dev_bondlink_backup.sh and aws/delete_versions.sh — if those
-  change, this flow needs a matching manual update.
+  dev_bondlink_backup.sh is inlined below (quoted heredoc delimiter, so nothing is
+  expanded by the outer shell). Source of truth remains rundeck-jobs'
+  databases/dev_bondlink_backup.sh — if that changes, this flow needs a matching
+  manual update.
+
+  Retention belongs to the bucket: bondlink-data-east's devbackups lifecycle rule
+  expires backups/mysql/us-east-1/devbackups after 10 days.
 
 tasks:
-  - id: backup_and_prune
+  - id: backup
     type: io.kestra.plugin.fs.ssh.Command
     host: proddbanalytics.bondlink.vpc
     port: "2007"
@@ -249,74 +249,7 @@ tasks:
         chmod +x /tmp/dev_bondlink_backup.sh
         bash +x /tmp/dev_bondlink_backup.sh
 
-        cat > /tmp/delete_versions.sh <<'PRUNE_SCRIPT'
-        #!/usr/bin/env bash
-        REGION=
-        PREFIX=
-        BUCKET=
-        DAYS="30"
-        FORCE=0
-        function usage {
-          echo "Usage: $0 -r region -b bucket -p prefix -d [number of days] -f (force, don't prompt)"
-        }
-        while getopts r:b:p:d:f OPT; do
-
-          case "$OPT" in
-            r)
-              REGION="${OPTARG}" ;;
-            p)
-              PREFIX="${OPTARG}" ;;
-            b)
-              BUCKET="${OPTARG}" ;;
-            d)
-              DAYS="${OPTARG}"
-              ;;
-            f)
-              FORCE=1
-              ;;
-            ?)
-              usage "$@" && exit 2 ;;
-          esac
-        done;
-        END_DAILY=$(date -d "now - ${DAYS} days" +'%Y-%m-%d')
-        VERSIONQ="?LastModified < '${END_DAILY}'"
-
-        echo "Deleting contents matching ${REGION} ${BUCKET}/${PREFIX}/ filtering on ${VERSIONQ}"
-        answer=
-        if [ $FORCE -eq 0 ]; then
-          echo "Apply these changes [Y/n]"
-          read answer
-        fi
-
-        if [[ "$answer" != "${answer#[Yy]}" || $FORCE -eq 1 ]] ;then
-          echo "Running query, deleting in batches"
-        #set -x
-          /usr/local/bin/aws s3api list-object-versions \
-              --region "$REGION" \
-              --bucket "$BUCKET" \
-              --prefix "${PREFIX}/" \
-              --query  "Versions[${VERSIONQ}].[Key,VersionId]" \
-              --no-cli-pager \
-              --output text |
-          awk '{ acc = acc "{Key=" $1 ",VersionId=" $2 "}," }
-               NR % 500 == 0 {print "Objects=[" acc "],Quiet=False"; acc="" }
-               END { print "Objects=[" acc "],Quiet=False" }' |
-          awk '{gsub(/{Key=None,VersionId=},/, "");}1' |
-          while read batch; do
-          if [ "$batch" = "Objects=[],Quiet=False" ]; then
-              echo "Nothing to delete"
-            else
-              /usr/local/bin/aws s3api delete-objects --bucket "$BUCKET" --delete "$batch" --output text --no-cli-pager
-            fi
-          done
-        else
-          echo "Not applying query"
-        fi
-        PRUNE_SCRIPT
-        chmod +x /tmp/delete_versions.sh
-        bash +x /tmp/delete_versions.sh -r us-east-1 -b bondlink-data-east -p "backups/mysql/us-east-2/devbackups" -d 10 -f
-
-        rm -f /tmp/dev_bondlink_backup.sh /tmp/delete_versions.sh
+        rm -f /tmp/dev_bondlink_backup.sh
 
 triggers:
   - id: schedule
