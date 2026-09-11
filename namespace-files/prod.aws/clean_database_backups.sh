@@ -3,7 +3,7 @@
 # are all required: the correct delete mode is a property of the (bucket, prefix) pair's lifecycle
 # rules, not of the bucket, and the retention policy differs per prefix, so neither can be inferred.
 
-ALLOWED_BUCKETS="bondlink-data bondlink-data-east bondlink-data-ohio bondlink-data-east-ohio"
+ALLOWED_BUCKETS="bondlink-data bondlink-data-east bondlink-data-ohio"
 
 S3_BUCKET=
 S3_PREFIX=
@@ -23,7 +23,7 @@ Usage: clean_database_backups.sh --bucket <bucket> --prefix <prefix> --retain <p
                                  --mode <marker|version> [--live]
        --retain last-days additionally requires --keep-days and --max-stale-days
 
-  --bucket   one of: bondlink-data bondlink-data-east bondlink-data-ohio bondlink-data-east-ohio
+  --bucket   one of: bondlink-data bondlink-data-east bondlink-data-ohio
   --prefix   key prefix holding date-stamped backups, no leading or trailing slash
              (e.g. backups/mysql/bondlink-us-east-1)
   --retain   banded  GFS bands: every entry to 366 days, Sundays only for the year before that,
