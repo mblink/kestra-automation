@@ -163,7 +163,7 @@ tasks:
           UNION ALL
           # All bank custom domain hosts, without `www.`
           (
-            SELECT DISTINCT custom_domain COLLATE utf8mb4_unicode_ci, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain COLLATE utf8mb4_unicode_ci, "^https?://www\.", "")) AS host
+            SELECT DISTINCT custom_domain COLLATE utf8mb4_unicode_ci, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain COLLATE utf8mb4_unicode_ci, "^(https?://)?(www[.])?", "")) AS host
             FROM Banks
             WHERE custom_domain IS NOT NULL
             ORDER BY custom_domain ASC
@@ -179,7 +179,7 @@ tasks:
           UNION ALL
           # All issuer custom domain hosts, without `www.`
           (
-            SELECT DISTINCT custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain, "^https?://www\.", "")) AS host
+            SELECT DISTINCT custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain, "^(https?://)?(www[.])?", "")) AS host
             FROM Issuers
             WHERE custom_domain != ""
             ORDER BY custom_domain ASC
@@ -222,13 +222,13 @@ tasks:
         # The hosts file contains neither the begin nor end line
         if ! grep -q "$leadrx" <<< "$hosts"; then
           if ! grep -q "$tailrx" <<< "$hosts"; then
-            hosts="$hosts\\n\\n$lead\\n$(cat "$all_domains")\\n$tail"
+            hosts="$(printf '$sq'%%s\\n\\n%%s\\n%%s\\n%%s'$sq' "$hosts" "$lead" "$(cat "$all_domains")" "$tail")"
           fi
         fi
 
         # Backup the existing hosts file, then overwrite it
         sudo mv /etc/hosts /etc/hosts.bak
-        printf "$hosts" | sudo tee /etc/hosts > /dev/null
+        printf '$sq'%%s\\n'$sq' "$hosts" | sudo tee /etc/hosts > /dev/null
 
         #clear the redis of all databases
         redis-cli -h localhost FLUSHALL;
