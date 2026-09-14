@@ -212,8 +212,13 @@ keyToDateS() {
 # Permanently removes every version and delete marker under one key prefix. Paginates the listing,
 # batches at the delete-objects limit of 1000, and fails on .Errors -- the API returns 0 on a
 # partial failure, so an unchecked call reports success while leaving objects behind.
+#
+# $2 bounds the sweep to one exact key. A <stamp>/ prefix is delimiter-bounded, so everything it
+# matches belongs to that backup; a <stamp>.7z key is not, so the same call would also sweep any
+# sibling beginning with it (a .7z.001 volume, a .7z.sha256). Callers pass it for every key that
+# is an object rather than a directory.
 deleteAllVersions() {
-  local keyPrefix="$1" token page ids chunk payload res errCount total=0
+  local keyPrefix="$1" exactKey="${2:-}" token page ids chunk payload res errCount total=0
   token=
   while :; do
     if [ -n "${token}" ]; then
@@ -223,7 +228,9 @@ deleteAllVersions() {
       page=$("${AWS_BIN}" s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
         --max-items 1000 --output json)
     fi
-    ids=$(jq -c '[ (.Versions // [])[], (.DeleteMarkers // [])[] | {Key, VersionId} ]' <<< "${page}")
+    ids=$(jq -c --arg exact "${exactKey}" \
+      '[ (.Versions // [])[], (.DeleteMarkers // [])[]
+         | select($exact == "" or .Key == $exact) | {Key, VersionId} ]' <<< "${page}")
     local count
     count=$(jq 'length' <<< "${ids}")
     total=$((total + count))
@@ -245,9 +252,11 @@ deleteAllVersions() {
   log "  removed ${total} version(s)/marker(s) under ${keyPrefix}"
 }
 
-# Counts what version mode would remove, without removing it.
+# Counts what version mode would remove, without removing it. $2 bounds the count to one exact
+# key, exactly as deleteAllVersions does -- the dry run has to report the same set the live run
+# would touch, or it is not a preview of anything.
 countAllVersions() {
-  local keyPrefix="$1" token page objects bytes total=0 totalBytes=0
+  local keyPrefix="$1" exactKey="${2:-}" token page objects bytes total=0 totalBytes=0
   token=
   while :; do
     if [ -n "${token}" ]; then
@@ -257,8 +266,11 @@ countAllVersions() {
       page=$("${AWS_BIN}" s3api list-object-versions --bucket "${S3_BUCKET}" --prefix "${keyPrefix}" \
         --max-items 1000 --output json)
     fi
-    objects=$(jq '((.Versions // []) | length) + ((.DeleteMarkers // []) | length)' <<< "${page}")
-    bytes=$(jq '[(.Versions // [])[].Size] | add // 0' <<< "${page}")
+    objects=$(jq --arg exact "${exactKey}" \
+      '[ (.Versions // [])[], (.DeleteMarkers // [])[]
+         | select($exact == "" or .Key == $exact) ] | length' <<< "${page}")
+    bytes=$(jq --arg exact "${exactKey}" \
+      '[ (.Versions // [])[] | select($exact == "" or .Key == $exact) | .Size ] | add // 0' <<< "${page}")
     total=$((total + objects))
     totalBytes=$((totalBytes + bytes))
     token=$(jq -r '.NextToken // empty' <<< "${page}")
@@ -289,10 +301,15 @@ maybeDeleteBackup() {
       fi
       if [ "${MODE}" = "version" ]; then
         log "*** ${checkType} - $i/$totalKeys *** permanent version delete under ${TOP_LEVEL}/$item"
+        # An object key is not delimiter-bounded, so it is swept by exact match only.
+        exactKey=
+        if [ -z "${recursive}" ]; then
+          exactKey="${S3_PREFIX}/${item}"
+        fi
         if [ "${DRYRUN}" -eq 1 ]; then
-          countAllVersions "${S3_PREFIX}/${item}"
+          countAllVersions "${S3_PREFIX}/${item}" "${exactKey}"
         else
-          deleteAllVersions "${S3_PREFIX}/${item}"
+          deleteAllVersions "${S3_PREFIX}/${item}" "${exactKey}"
         fi
       else
         log "*** ${checkType} - $i/$totalKeys *** aws s3 rm ${recursive}${TOP_LEVEL}/$item"
