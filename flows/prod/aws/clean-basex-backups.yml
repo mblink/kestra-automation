@@ -6,7 +6,11 @@ description: |
 
   Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated.
 
-  Keeps the newest backup per calendar month for older months and everything from the recent ones, under backups/basex in both s3://bondlink-data-east and its archive s3://bondlink-data-ohio. The window runs from 2021-08 up to but excluding three months before now, so the four most recent months are always kept whole. Only `IceGsm-` full backups are matched; `IceGsmUpdateLog-` keys are never pruned, and there are 1,385 of them in ohio that nothing expires.
+  Keeps the newest `IceGsm-` full per calendar month for older months and every full from the recent ones, under backups/basex in both s3://bondlink-data-east and its archive s3://bondlink-data-ohio. East holds only what the producer last wrote; the monthly history is in ohio, so a single-bucket run prunes the copy that has nothing to prune and leaves the archive untouched.
+
+  The window runs from 2021-08 up to but excluding three months before now, so the four most recent months are always kept whole -- a month's extra fulls are deleted on the first run after it leaves the window, not while it is in it.
+
+  `IceGsmUpdateLog-` keys match nothing here and no lifecycle rule expires them in either bucket, so they accumulate without bound. That is pre-existing and deliberate in this script; it needs its own decision.
 
   clean_basex_backups.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow, unlike syslogs.sh/bondlink_logs.py/ensure_salt_perms.sh which are genuinely shared across multiple flows. It is called with no args, so it runs live rather than --dry-run.
 
@@ -86,6 +90,8 @@ tasks:
         # which nothing pruned while this was single-bucket. The listing is one merged .Contents
         # per bucket -- the CLI paginates list-objects-v2 itself, and both prefixes are well over
         # the 1000-key page size (east 12685, ohio 1512).
+        windowMonths="$(printf '%s\n' "${yearMonthsToDelete[@]}" | wc -l | tr -d ' ')"
+
         for s3Bucket in bondlink-data-east bondlink-data-ohio; do
           log "*************** Bucket $s3Bucket"
 
@@ -100,6 +106,15 @@ tasks:
               '
           )"
 
+          # A run with nothing to delete used to print not one line, so an empty listing, a failed
+          # listing and a healthy no-op were the same in the logs -- which is the whole of what a
+          # reader gets to check. Counts come from jq rather than bash's array-length syntax: that
+          # spelling opens with a brace-hash, which Pebble reads as the start of a comment and
+          # which fails the flow at execution time, so it cannot appear in an ssh.Command block.
+          matchedMonths="$(jq 'length' <<< "$keysByYearMonth")"
+          matchedKeys="$(jq '[.[] | length] | add // 0' <<< "$keysByYearMonth")"
+          deleteCount=0
+
           for yearMonth in "${yearMonthsToDelete[@]}"; do
             backupsToDelete="$(
               jq '
@@ -113,6 +128,7 @@ tasks:
             )"
 
             if [ "$backupsToDelete" != '[]' ]; then
+              deleteCount=$((deleteCount + $(jq 'length' <<< "$backupsToDelete")))
               log "*************** Deleting BaseX backups from $s3Bucket $yearMonth -- $backupsToDelete"
 
               apiJson="$(jq '{ "Objects": (. | map({ "Key": . })) }' <<< "$backupsToDelete")"
@@ -131,6 +147,8 @@ tasks:
               fi
             fi
           done
+
+          log "Summary $s3Bucket: $matchedKeys IceGsm key(s) across $matchedMonths month(s), $windowMonths month(s) in the delete window, $deleteCount key(s) $([ "$dryRun" = 1 ] && echo 'that would be deleted' || echo 'deleted')"
         done
         CLEAN_BASEX_SCRIPT
         chmod +x /tmp/clean_basex_backups.sh
