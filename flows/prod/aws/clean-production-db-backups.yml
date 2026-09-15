@@ -2,11 +2,18 @@ id: clean-production-db-backups
 namespace: prod.aws
 
 description: |
-  Retention for the date-stamped MySQL backups in s3://bondlink-data-east. backups/mysql/bondlink-us-east-1
-  and backups/mysql/mariadb-dump both get the same GFS bands -- every entry kept for 366 days,
-  Sundays only for the year before that, first-of-month only back to 20 years. Storage class and any
-  flat age-based expiry belong to the bucket's lifecycle rules; this job exists only for what
+  Retention for the date-stamped MySQL backups in s3://bondlink-data-east and its archive
+  s3://bondlink-data-ohio. Every prefix below gets the same GFS bands -- every entry kept for 366
+  days, Sundays only for the year before that, first-of-month only back to 20 years. Storage class
+  and any flat age-based expiry belong to the bucket's lifecycle rules; this job exists only for what
   lifecycle cannot express.
+
+  A series name belongs to one era of the cluster, so the archive needs an invocation per series:
+  bondlink-us-east-1 goes quiet while prod ran under bondlink-us-west-2 and then bondlink-us-east-2,
+  and a single-prefix run bands one era and leaves the rest governed by nothing.
+
+  The bondlink-data-ohio invocations carry no --live, so they report and delete nothing. Their first
+  banded pass is large, and the intent is to read one scheduled run's output before arming it.
 
   Bucket, prefix, retention policy and delete mode are all required arguments. Delete mode is a
   property of the (bucket, prefix) pair rather than the bucket: marker mode leaves a delete marker
@@ -48,6 +55,10 @@ tasks:
         chmod +x /tmp/clean_database_backups.sh
         /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker --live
         /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/mariadb-dump --retain banded --mode marker --live
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-east-2 --retain banded --mode marker
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-west-2 --retain banded --mode marker
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/mariadb-dump --retain banded --mode marker
         rm -f /tmp/clean_database_backups.sh
 
 triggers:
