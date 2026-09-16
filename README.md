@@ -58,3 +58,4 @@ Each flow's result is cached to `tests/integration_cache/<environment>/
 baseline) so the next run prints what changed since last time (hosts
 added/removed). That's diagnostic output, not a pass/fail check — live infra
 drifting is expected, not a bug.
+
