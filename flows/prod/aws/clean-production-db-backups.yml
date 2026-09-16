@@ -13,8 +13,11 @@ description: |
   bondlink-us-east-2 hold those middle years. A single-prefix run bands one era and leaves the rest
   governed by nothing.
 
-  Each invocation's status is accumulated rather than aborting the task, so one failing prefix does
-  not silently skip the prefixes after it; the task fails once at the end.
+  Each invocation's exit code is accumulated rather than aborting the task, so one failing prefix
+  does not silently skip the prefixes after it; the task fails once at the end. The accumulator is
+  named rc, not status: this block runs under zsh (bldeploy's login shell, which ssh.Command
+  invokes), where `status` is a read-only alias for $? -- assigning it aborts the whole task before
+  a single prefix is pruned.
 
   Bucket, prefix, retention policy and delete mode are all required arguments. Delete mode is a
   property of the (bucket, prefix) pair rather than the bucket: marker mode leaves a delete marker
@@ -54,15 +57,15 @@ tasks:
         {{ read('clean_database_backups.sh') }}
         CLEAN_DB_BACKUPS_SCRIPT
         chmod +x /tmp/clean_database_backups.sh
-        status=0
-        /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker --live || status=1
-        /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/mariadb-dump --retain banded --mode marker --live || status=1
-        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker --live || status=1
-        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-east-2 --retain banded --mode marker --live || status=1
-        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-west-2 --retain banded --mode marker --live || status=1
-        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/mariadb-dump --retain banded --mode marker --live || status=1
+        rc=0
+        /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker --live || rc=1
+        /tmp/clean_database_backups.sh --bucket bondlink-data-east --prefix backups/mysql/mariadb-dump --retain banded --mode marker --live || rc=1
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-east-1 --retain banded --mode marker --live || rc=1
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-east-2 --retain banded --mode marker --live || rc=1
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/bondlink-us-west-2 --retain banded --mode marker --live || rc=1
+        /tmp/clean_database_backups.sh --bucket bondlink-data-ohio --prefix backups/mysql/mariadb-dump --retain banded --mode marker --live || rc=1
         rm -f /tmp/clean_database_backups.sh
-        exit "$status"
+        exit "$rc"
 
 triggers:
   - id: schedule
