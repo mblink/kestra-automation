@@ -41,16 +41,25 @@ if [ ! -r "$KESTRA_PILLAR" ]; then
   exit 2
 fi
 
+# Forwarded arguments are ALLOW-listed, not deny-listed. A deny-list has to enumerate every
+# spelling of every write flag, and curl accepts attached values and combined short options:
+# -XPOST, -d{...}, --json and even -sXPOST all mean "write" while matching no exact token. Since
+# this runs unprompted under .claude/settings.json and carries the single no-RBAC admin
+# credential, a miss here would route straight around the deny rules on `kestra flow ... update`
+# and `kestra flow delete`. Anything not named below is refused, including a bare argument --
+# curl reads one as an additional URL, which would send the credential to another host.
 args=()
 for arg in "$@"; do
   case "$arg" in
-    # Reject the flags that would turn this into a write client. Kestra mutates state with
-    # POST/PUT/DELETE, each of which needs one of these to be expressed through curl.
-    -X|--request|-d|--data|--data-*|-F|--form|-T|--upload-file)
-      echo "error: ${arg} would make this a write request; this client is GET-only" >&2
-      exit 2 ;;
     *==*) args+=(--data-urlencode "${arg%%==*}=${arg#*==}") ;;
-    *) args+=("$arg") ;;
+    # Diagnostics only: none takes a value, selects a method, sets a body or adds a
+    # destination. There is deliberately no -o: redirect with > instead, so no arm has to
+    # accept a following bare word.
+    -i|--include|-v|--verbose|--compressed) args+=("$arg") ;;
+    *)
+      echo "error: refusing to forward '${arg}' -- this client is GET-only and accepts" >&2
+      echo "       key==value query parameters plus -i/-v/--compressed only" >&2
+      exit 2 ;;
   esac
 done
 

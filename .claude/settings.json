@@ -10,7 +10,7 @@
   "permissions": {
     "deny": [
       "Read(**/.env)",
-      "Read(**/.env.*)",
+      "Read(**/.env.local)",
       "Read(**/*.key)",
       "Read(**/*.pem)",
       "Read(**/*.gpg)",

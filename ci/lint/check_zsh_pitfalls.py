@@ -33,7 +33,7 @@ SSH_COMMAND = "io.kestra.plugin.fs.ssh.Command"
 PEBBLE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 # Quoted heredoc: <<'EOF' / <<-"EOF". Only the quoted form is inert -- an unquoted
 # heredoc is still expanded by zsh, so it is deliberately left in scope.
-HEREDOC = re.compile(r"<<-?\s*(['\"])(\w+)\1")
+HEREDOC = re.compile(r"<<-?\s*(['\"])([\w.-]+)\1")
 
 # Assignment to NAME, excluding `NAME==`, a `--NAME=` flag, and a path ending in NAME.
 def assign(names):
@@ -131,9 +131,29 @@ def fill(text, name):
     return text.replace("<NAME>", name).replace("<UPPER>", name.upper())
 
 
+def strip_comment(line):
+    """Drop a trailing unquoted `#` comment.
+
+    Not a shell lexer -- just enough that prose naming a flagged parameter does not fail
+    the gate. These blocks are heavily commented, and a gate that trips on its own
+    explanation ("name it rc, not status=0") gets switched off rather than obeyed. A `#`
+    only opens a comment at the start of a word, so $# and ${#a} are untouched.
+    """
+    in_single = in_double = False
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
+
+
 def scan(body):
     """Yield (lineno, message) for each hazard in an already-sanitized block."""
-    for lineno, line in enumerate(body.split("\n"), start=1):
+    for lineno, raw in enumerate(body.split("\n"), start=1):
+        line = strip_comment(raw)
         for pattern, what, why in RULES:
             for m in pattern.finditer(line):
                 name = next((g for g in m.groups() if g), m.group(0))

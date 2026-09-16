@@ -114,6 +114,42 @@ SCRIPT
     assert r.returncode == 1, f"gate skipped an unquoted heredoc:\n{r.stdout}"
 
 
+def test_comments_naming_a_parameter_do_not_fire(tmp_path):
+    # These blocks are heavily commented, and the most natural comment to write next to
+    # the fix names the thing it is warning about. A gate that trips on its own
+    # explanation gets switched off rather than obeyed.
+    r = run(root=probe_repo(tmp_path, """
+set -e
+# name it rc, not status=0, because status is read-only in zsh
+rc=0
+/tmp/x.sh || rc=1          # path= would clobber PATH here too
+exit "$rc"
+"""))
+    assert r.returncode == 0, f"gate fired on a comment:\n{r.stdout}"
+
+
+def test_hash_inside_an_expansion_is_not_a_comment(tmp_path):
+    # The comment strip must not treat $# or ${#a} as opening a comment, or it would
+    # blind the gate to everything after them on the line.
+    r = run(root=probe_repo(tmp_path, 'set -e\n[ $# -gt 0 ] && status=1\n'))
+    assert r.returncode == 1, f"comment strip swallowed real code:\n{r.stdout}"
+
+
+@pytest.mark.parametrize("delim", ["EOF-1", "E.O.F", "CLEAN_DB_BACKUPS_SCRIPT"])
+def test_heredoc_delimiters_with_punctuation(tmp_path, delim):
+    # A delimiter the regex does not recognise leaves the body in scope, and a bash body
+    # scanned as zsh is a wall of false positives.
+    r = run(root=probe_repo(tmp_path, f"""
+set -e
+cat > /tmp/x.sh <<'{delim}'
+status=0
+echo "${{v,,}}"
+{delim}
+/tmp/x.sh
+"""))
+    assert r.returncode == 0, f"delimiter {delim!r} not recognised:\n{r.stdout}"
+
+
 def test_refuses_when_it_resolves_nothing(tmp_path):
     # A resolver failure must be fatal, not a silent pass -- the same rule
     # ci/lint/lint.sh applies to its own file lists.
