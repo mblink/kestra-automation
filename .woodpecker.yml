@@ -25,8 +25,11 @@
 #     step and no docker.sock mount are needed.
 
 when:
-  - event: [push, pull_request, manual]
+  - event: [push, manual]
     branch: [main]
+  # No branch filter: `branch` matches a PR's TARGET, so each part of a stacked PR --
+  # whose target is the part below it -- only gets a status if any target is accepted.
+  - event: pull_request
 
 labels:
   platform: linux/arm64
