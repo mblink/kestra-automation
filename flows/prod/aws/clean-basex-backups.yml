@@ -6,7 +6,13 @@ description: |
 
   Source job had no <nodefilters> block at all; targets prodsalt as an assumption, matching the same convention as other nodefilter-less salt-master jobs in this repo -- confirm against the live Rundeck job's resolved node list before treating this as validated.
 
-  aws/clean_basex_backups.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow, unlike syslogs.sh/bondlink_logs.py/ensure_salt_perms.sh which are genuinely shared across multiple flows. Source of truth remains rundeck-jobs' aws/clean_basex_backups.sh. Source job called this with no args (live mode, not --dry-run).
+  Keeps the newest `IceGsm-` full per calendar month for older months and every full from the recent ones, under backups/basex in both s3://bondlink-data-east and its archive s3://bondlink-data-ohio. East holds only what the producer last wrote; the monthly history is in ohio, so a single-bucket run prunes the copy that has nothing to prune and leaves the archive untouched.
+
+  The window runs from 2021-08 up to but excluding three months before now, so the four most recent months are always kept whole -- a month's extra fulls are deleted on the first run after it leaves the window, not while it is in it.
+
+  `IceGsmUpdateLog-` keys match nothing here and no lifecycle rule expires them in either bucket, so they accumulate without bound. That is pre-existing and deliberate in this script; it needs its own decision.
+
+  clean_basex_backups.sh is inlined below (quoted heredoc) rather than pulled from Namespace Files -- it's only used by this one flow, unlike syslogs.sh/bondlink_logs.py/ensure_salt_perms.sh which are genuinely shared across multiple flows. It is called with no args, so it runs live rather than --dry-run.
 
 tasks:
   - id: clean_backups
@@ -77,51 +83,72 @@ tasks:
           startYearMonth="$(computeStartYearMonth)"
         done
 
-        s3Bucket='bondlink-data'
         s3Prefix='backups/basex'
         keyRx='^'$s3Prefix'/IceGsm-(?<ym>[0-9]{4}-[0-9]{2})-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}\\.(zip|tar\\.br|tar\\.zst)$'
 
-        keysByYearMonth="$(
-          /usr/local/bin/aws s3api list-objects-v2 --bucket "$s3Bucket" --prefix "$s3Prefix" \
-            | jq -c '
-              .Contents
-              | map(.Key)
-              | map(select(test("'$keyRx'")))
-              # Reduce keys into an object keyed by `$year-$month`
-              | reduce .[] as $x ({}; ($x | sub("'$keyRx'"; "\(.ym)")) as $ym | .[$ym] = ((.[$ym] // []) + [$x]))
-            '
-        )"
+        # East holds what the producer last wrote; the monthly history lives in the ohio archive,
+        # which nothing pruned while this was single-bucket. The listing is one merged .Contents
+        # per bucket -- the CLI paginates list-objects-v2 itself, and both prefixes are well over
+        # the 1000-key page size (east 12685, ohio 1512).
+        windowMonths="$(printf '%s\n' "${yearMonthsToDelete[@]}" | wc -l | tr -d ' ')"
 
-        for yearMonth in "${yearMonthsToDelete[@]}"; do
-          backupsToDelete="$(
-            jq '
-              # Get backups from the given year/month
-              .["'$yearMonth'"]
-              # Sort them so the latest appear at the end
-              | sort
-              # Drop the last one (we keep the most recent backup from the year/month)
-              | .[0:-1]
-            ' <<< "$keysByYearMonth"
+        for s3Bucket in bondlink-data-east bondlink-data-ohio; do
+          log "*************** Bucket $s3Bucket"
+
+          keysByYearMonth="$(
+            /usr/local/bin/aws s3api list-objects-v2 --bucket "$s3Bucket" --prefix "$s3Prefix" \
+              | jq -c '
+                .Contents
+                | map(.Key)
+                | map(select(test("'$keyRx'")))
+                # Reduce keys into an object keyed by `$year-$month`
+                | reduce .[] as $x ({}; ($x | sub("'$keyRx'"; "\(.ym)")) as $ym | .[$ym] = ((.[$ym] // []) + [$x]))
+              '
           )"
 
-          if [ "$backupsToDelete" != '[]' ]; then
-            log "*************** Deleting BaseX backups from $yearMonth -- $backupsToDelete"
+          # A run with nothing to delete used to print not one line, so an empty listing, a failed
+          # listing and a healthy no-op were the same in the logs -- which is the whole of what a
+          # reader gets to check. Counts come from jq rather than bash's array-length syntax: that
+          # spelling opens with a brace-hash, which Pebble reads as the start of a comment and
+          # which fails the flow at execution time, so it cannot appear in an ssh.Command block.
+          matchedMonths="$(jq 'length' <<< "$keysByYearMonth")"
+          matchedKeys="$(jq '[.[] | length] | add // 0' <<< "$keysByYearMonth")"
+          deleteCount=0
 
-            apiJson="$(jq '{ "Objects": (. | map({ "Key": . })) }' <<< "$backupsToDelete")"
+          for yearMonth in "${yearMonthsToDelete[@]}"; do
+            backupsToDelete="$(
+              jq '
+                # Get backups from the given year/month, force array if null
+                (.["'$yearMonth'"] // [])
+                # Sort them so the latest appear at the end
+                | sort
+                # Drop the last one (we keep the most recent backup from the year/month)
+                | .[0:-1]
+              ' <<< "$keysByYearMonth"
+            )"
 
-            if [ "$dryRun" = 0 ]; then
-              res="$(/usr/local/bin/aws s3api delete-objects --bucket "$s3Bucket" --delete "$apiJson")"
+            if [ "$backupsToDelete" != '[]' ]; then
+              deleteCount=$((deleteCount + $(jq 'length' <<< "$backupsToDelete")))
+              log "*************** Deleting BaseX backups from $s3Bucket $yearMonth -- $backupsToDelete"
 
-              # The command above returns an exit code of 0 even when there were errors
-              # so we need to check the response's errors key
-              errors="$(jq '.Errors | select(length | . > 0)' <<< "$res")"
+              apiJson="$(jq '{ "Objects": (. | map({ "Key": . })) }' <<< "$backupsToDelete")"
 
-              if [ ! -z "$errors" ]; then
-                log "Failed to delete backups:\n$(echo "$errors")"
-                exit 1
+              if [ "$dryRun" = 0 ]; then
+                res="$(/usr/local/bin/aws s3api delete-objects --bucket "$s3Bucket" --delete "$apiJson")"
+
+                # The command above returns an exit code of 0 even when there were errors
+                # so we need to check the response's errors key
+                errors="$(jq '.Errors | select(length | . > 0)' <<< "$res")"
+
+                if [ ! -z "$errors" ]; then
+                  log "Failed to delete backups:\n$(echo "$errors")"
+                  exit 1
+                fi
               fi
             fi
-          fi
+          done
+
+          log "Summary $s3Bucket: $matchedKeys IceGsm key(s) across $matchedMonths month(s), $windowMonths month(s) in the delete window, $deleteCount key(s) $([ "$dryRun" = 1 ] && echo 'that would be deleted' || echo 'deleted')"
         done
         CLEAN_BASEX_SCRIPT
         chmod +x /tmp/clean_basex_backups.sh
@@ -145,4 +172,4 @@ errors:
     subject: "Kestra[prod_cron] Clean BaseX backups failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}

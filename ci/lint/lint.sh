@@ -7,9 +7,11 @@
 # `read()`/execute via ssh.Command (namespace-files/**/*.sh).
 #
 # ALL linters are BLOCKING. The mode arg only selects WHICH linters run:
-#   all   -> ruff + shellcheck (default)
+#   all   -> ruff + shellcheck + ssh-commands + zsh-pitfalls (default)
 #   py    -> only ruff
 #   shell -> only shellcheck
+#   ssh   -> only the ssh.Command commands: gate
+#   zsh   -> only the zsh special-parameter gate
 #
 # Exit status is the number of checks that reported problems.
 set -uo pipefail
@@ -67,11 +69,29 @@ run_shell() {
   run_linted '*.sh' shellcheck --severity=warning -f gcc || fails=$((fails + 1))
 }
 
+run_ssh_commands() {
+  hr "shellcheck (ssh.Command commands: blocks)"
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "shellcheck not installed -- it is required (baked into the CI image)" >&2
+    exit 2
+  fi
+  python3 ci/lint/check_ssh_commands.py || fails=$((fails + 1))
+}
+
+run_zsh_pitfalls() {
+  hr "zsh special parameters (ssh.Command commands: blocks)"
+  # No external linter: shellcheck cannot parse zsh (SC1071) and `zsh -n` only checks
+  # syntax, which `status=0` passes. See the checker's docstring.
+  python3 ci/lint/check_zsh_pitfalls.py || fails=$((fails + 1))
+}
+
 case "$MODE" in
-  all) run_py; run_shell ;;
+  all) run_py; run_shell; run_ssh_commands; run_zsh_pitfalls ;;
   py) run_py ;;
   shell) run_shell ;;
-  *) echo "usage: lint.sh [all|py|shell]"; exit 2 ;;
+  ssh) run_ssh_commands ;;
+  zsh) run_zsh_pitfalls ;;
+  *) echo "usage: lint.sh [all|py|shell|ssh|zsh]"; exit 2 ;;
 esac
 
 printf '\n=== lint(%s) summary: %d check(s) reported problems ===\n' "$MODE" "$fails"

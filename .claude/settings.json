@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "outputStyle": "concise",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": true
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/*.key)",
+      "Read(**/*.pem)",
+      "Read(**/*.gpg)",
+
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --force-with-lease*)",
+      "Bash(git reset --hard:*)",
+
+      "Bash(kestra flow namespace update*)",
+      "Bash(kestra namespace files update*)",
+      "Bash(kestra flow delete*)",
+      "Bash(kestra namespace files delete*)",
+      "Bash(make sync*)",
+      "Bash(*sync-flows.sh*)",
+
+      "Bash(aws s3 rm*)",
+      "Bash(aws s3api delete-object*)",
+      "Bash(aws s3api delete-bucket*)",
+      "Bash(aws s3api put-bucket-lifecycle-configuration*)",
+      "Bash(aws s3api put-bucket-versioning*)",
+      "Bash(/usr/local/bin/aws s3 rm*)",
+      "Bash(/usr/local/bin/aws s3api delete-object*)",
+      "Bash(/usr/local/bin/aws s3api delete-bucket*)",
+      "Bash(/usr/local/bin/aws s3api put-bucket-lifecycle-configuration*)",
+      "Bash(/usr/local/bin/aws s3api put-bucket-versioning*)",
+
+      "Bash(*clean_database_backups.sh*--live*)",
+      "Bash(*clean_basex_backups.sh*--live*)"
+    ],
+
+    "ask": [
+      "Bash(rm *)",
+      "Bash(mv *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(kestra *)",
+      "Bash(make test-integration*)",
+      "Bash(docker compose*)",
+      "Bash(docker-compose*)",
+      "Bash(pip install*)",
+      "Bash(brew install*)"
+    ],
+
+    "allow": [
+      "Bash(./bin/kestra-api.sh:*)",
+      "Bash(bin/kestra-api.sh:*)",
+
+      "Bash(aws s3 ls:*)",
+      "Bash(aws s3api list-*)",
+      "Bash(aws s3api get-*)",
+      "Bash(aws s3api head-*)",
+      "Bash(aws ec2 describe-*)",
+      "Bash(aws sts get-caller-identity:*)",
+      "Bash(/usr/local/bin/aws s3 ls:*)",
+      "Bash(/usr/local/bin/aws s3api list-*)",
+      "Bash(/usr/local/bin/aws s3api get-*)",
+      "Bash(/usr/local/bin/aws s3api head-*)",
+      "Bash(/usr/local/bin/aws ec2 describe-*)",
+      "Bash(/usr/local/bin/aws sts get-caller-identity:*)",
+
+      "Bash(make test:*)",
+      "Bash(make lint:*)",
+      "Bash(make setup:*)",
+      "Bash(make help:*)",
+      "Bash(make generate-error-block:*)",
+      "Bash(./.venv/bin/pytest:*)",
+      "Bash(bash ci/lint/lint.sh:*)",
+      "Bash(python3 ci/lint/check_ssh_commands.py:*)",
+      "Bash(shellcheck:*)",
+      "Bash(ruff:*)",
+      "Bash(zsh -n:*)",
+
+      "Bash(gh browse:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue status:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh label list:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr comments:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr status:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh release list:*)",
+      "Bash(gh release view:*)",
+      "Bash(gh repo list:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh search code:*)",
+      "Bash(gh search commits:*)",
+      "Bash(gh search issues:*)",
+      "Bash(gh search prs:*)",
+      "Bash(gh search repos:*)",
+
+      "Bash(git blame:*)",
+      "Bash(git branch:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git show:*)",
+      "Bash(git stash list:*)",
+      "Bash(git status:*)",
+
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rm /private/tmp/claude-*)",
+      "Bash(rm -f /private/tmp/claude-*)",
+      "Bash(rm -r /private/tmp/claude-*)",
+      "Bash(rm -rf /private/tmp/claude-*)",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "network": {
+      "allowedDomains": [
+        "kestra.prod.bondlink.org",
+        "*.amazonaws.com",
+        "github.com",
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "codeload.github.com",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
+    },
+    "filesystem": {
+      "allowWrite": [
+        "/tmp/claude/**",
+        "/private/tmp/claude/**",
+        "/private/tmp/claude-501/**"
+      ]
+    }
+  }
+}

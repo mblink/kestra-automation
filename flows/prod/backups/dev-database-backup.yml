@@ -11,10 +11,6 @@ description: |
   Source job had no <timeZone> tag — UTC assumed; confirm against live Rundeck before
   relying on the exact trigger time.
 
-  NOTE: dev_bondlink_backup.sh sources /src/oddjob/mariadb/backup_lib.sh on the target
-  host, which is NOT part of this repo — that dependency must already exist on
-  proddbanalytics (as it does today for Rundeck) for this flow to succeed.
-
   Mail is sent via SendGrid's HTTPS API directly (io.kestra.plugin.notifications.
   sendgrid.SendGridMailSend, using the real SendGrid Java SDK — confirmed present in
   the running image by inspecting the jar's bytecode, since Kestra's own docs page
@@ -26,16 +22,16 @@ description: |
   relay design entirely, per salt/kestra's kestra-postfix-auth state now writing only
   the SendGrid API key to /var/lib/kestra/.postfix-auth (no smtp-host/smtp-port).
 
-  Shared scripts are inlined below (quoted heredoc delimiters, so nothing is expanded
-  by the outer shell) rather than pulled from Namespace Files — simpler than standing
-  up a separate namespace-files sync mechanism, at the cost of duplicating the script
-  body anywhere else it's reused (e.g. delete_versions.sh also appears in other
-  Backups flows with different args). Source of truth for both scripts remains
-  rundeck-jobs' databases/dev_bondlink_backup.sh and aws/delete_versions.sh — if those
-  change, this flow needs a matching manual update.
+  dev_bondlink_backup.sh is inlined below (quoted heredoc delimiter, so nothing is
+  expanded by the outer shell). Source of truth remains rundeck-jobs'
+  databases/dev_bondlink_backup.sh — if that changes, this flow needs a matching
+  manual update.
+
+  Retention belongs to the bucket: bondlink-data-east's devbackups lifecycle rule
+  expires backups/mysql/us-east-1/devbackups after 10 days.
 
 tasks:
-  - id: backup_and_prune
+  - id: backup
     type: io.kestra.plugin.fs.ssh.Command
     host: proddbanalytics.bondlink.vpc
     port: "2007"
@@ -49,7 +45,42 @@ tasks:
         cat > /tmp/dev_bondlink_backup.sh <<'BACKUP_SCRIPT'
         #!/usr/bin/env bash
         set -e
-        . /src/oddjob/mariadb/backup_lib.sh
+
+        myq() {
+          sudo mariadb -e "$1"
+        }
+
+        IS_CLUSTER_MEMBER=$(myq "show status like 'wsrep_cluster_size'" | tail -1 | awk '{ print $NF }')
+        IS_REPLICA=
+        REPLICA_CHECK=$(myq "show slave status")
+        if test -z "${REPLICA_CHECK}"; then
+          IS_REPLICA=0
+        else
+          IS_REPLICA=1
+        fi
+
+        function desync {
+          if [ $IS_CLUSTER_MEMBER -gt 0 ]; then
+            myq "SET GLOBAL wsrep_desync = ON;"
+            myq "SET GLOBAL wsrep_on = OFF;"
+          elif [ $IS_REPLICA -eq 1 ]; then
+            myq "stop slave"
+          else
+            echo "Neither a cluster member or a replica, nothing to desync"
+          fi
+        }
+
+        function resync {
+          if [ $IS_CLUSTER_MEMBER -gt 0 ]; then
+            myq  "SET GLOBAL wsrep_on = ON;"
+            myq "SET GLOBAL wsrep_desync = OFF;"
+          elif [ $IS_REPLICA -eq 1 ]; then
+            myq "start slave"
+          else
+            echo "Neither a cluster member or a replica, nothing to resync"
+          fi
+        }
+
         declare -i CORES=0
         F_DATE=$(date '+%Y-%m-%d_%H-%M-%S')
         END_DAILY=$(date -d "now - 10 days" '+%Y-%m-%d')
@@ -132,7 +163,7 @@ tasks:
           UNION ALL
           # All bank custom domain hosts, without `www.`
           (
-            SELECT DISTINCT custom_domain COLLATE utf8mb4_unicode_ci, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain COLLATE utf8mb4_unicode_ci, "^https?://www\.", "")) AS host
+            SELECT DISTINCT custom_domain COLLATE utf8mb4_unicode_ci, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain COLLATE utf8mb4_unicode_ci, "^(https?://)?(www[.])?", "")) AS host
             FROM Banks
             WHERE custom_domain IS NOT NULL
             ORDER BY custom_domain ASC
@@ -148,7 +179,7 @@ tasks:
           UNION ALL
           # All issuer custom domain hosts, without `www.`
           (
-            SELECT DISTINCT custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain, "^https?://www\.", "")) AS host
+            SELECT DISTINCT custom_domain, CONCAT("127.0.0.1 ", REGEXP_REPLACE(custom_domain, "^(https?://)?(www[.])?", "")) AS host
             FROM Issuers
             WHERE custom_domain != ""
             ORDER BY custom_domain ASC
@@ -191,13 +222,13 @@ tasks:
         # The hosts file contains neither the begin nor end line
         if ! grep -q "$leadrx" <<< "$hosts"; then
           if ! grep -q "$tailrx" <<< "$hosts"; then
-            hosts="$hosts\\n\\n$lead\\n$(cat "$all_domains")\\n$tail"
+            hosts="$(printf '$sq'%%s\\n\\n%%s\\n%%s\\n%%s'$sq' "$hosts" "$lead" "$(cat "$all_domains")" "$tail")"
           fi
         fi
 
         # Backup the existing hosts file, then overwrite it
         sudo mv /etc/hosts /etc/hosts.bak
-        printf "$hosts" | sudo tee /etc/hosts > /dev/null
+        printf '$sq'%%s\\n'$sq' "$hosts" | sudo tee /etc/hosts > /dev/null
 
         #clear the redis of all databases
         redis-cli -h localhost FLUSHALL;
@@ -208,7 +239,7 @@ tasks:
         REGION="us-east-1"
         PREFIX="backups/mysql/us-east-1/devbackups"
         tar cf bondlink_dev_backup_${F_DATE}.tar BondLink_schema.sql BondLink_data.sql BondLink_triggers.sql BondLink_restore.sh
-        /usr/bin/zstd -14 --no-progress -T${CORES} bondlink_dev_backup_${F_DATE}.tar
+        /usr/bin/zstd -12 --no-progress -T${CORES} bondlink_dev_backup_${F_DATE}.tar
         sudo /usr/local/bin/aws s3 cp bondlink_dev_backup_${F_DATE}.tar.zst s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst --only-show-errors
         echo s3://${BUCKET}/${PREFIX}/bondlink_dev_backup_${F_DATE}.tar.zst
         cd $CWD
@@ -218,74 +249,7 @@ tasks:
         chmod +x /tmp/dev_bondlink_backup.sh
         bash +x /tmp/dev_bondlink_backup.sh
 
-        cat > /tmp/delete_versions.sh <<'PRUNE_SCRIPT'
-        #!/usr/bin/env bash
-        REGION=
-        PREFIX=
-        BUCKET=
-        DAYS="30"
-        FORCE=0
-        function usage {
-          echo "Usage: $0 -r region -b bucket -p prefix -d [number of days] -f (force, don't prompt)"
-        }
-        while getopts r:b:p:d:f OPT; do
-
-          case "$OPT" in
-            r)
-              REGION="${OPTARG}" ;;
-            p)
-              PREFIX="${OPTARG}" ;;
-            b)
-              BUCKET="${OPTARG}" ;;
-            d)
-              DAYS="${OPTARG}"
-              ;;
-            f)
-              FORCE=1
-              ;;
-            ?)
-              usage "$@" && exit 2 ;;
-          esac
-        done;
-        END_DAILY=$(date -d "now - ${DAYS} days" +'%Y-%m-%d')
-        VERSIONQ="?LastModified < '${END_DAILY}'"
-
-        echo "Deleting contents matching ${REGION} ${BUCKET}/${PREFIX}/ filtering on ${VERSIONQ}"
-        answer=
-        if [ $FORCE -eq 0 ]; then
-          echo "Apply these changes [Y/n]"
-          read answer
-        fi
-
-        if [[ "$answer" != "${answer#[Yy]}" || $FORCE -eq 1 ]] ;then
-          echo "Running query, deleting in batches"
-        #set -x
-          /usr/local/bin/aws s3api list-object-versions \
-              --region "$REGION" \
-              --bucket "$BUCKET" \
-              --prefix "${PREFIX}/" \
-              --query  "Versions[${VERSIONQ}].[Key,VersionId]" \
-              --no-cli-pager \
-              --output text |
-          awk '{ acc = acc "{Key=" $1 ",VersionId=" $2 "}," }
-               NR % 500 == 0 {print "Objects=[" acc "],Quiet=False"; acc="" }
-               END { print "Objects=[" acc "],Quiet=False" }' |
-          awk '{gsub(/{Key=None,VersionId=},/, "");}1' |
-          while read batch; do
-          if [ "$batch" = "Objects=[],Quiet=False" ]; then
-              echo "Nothing to delete"
-            else
-              /usr/local/bin/aws s3api delete-objects --bucket "$BUCKET" --delete "$batch" --output text --no-cli-pager
-            fi
-          done
-        else
-          echo "Not applying query"
-        fi
-        PRUNE_SCRIPT
-        chmod +x /tmp/delete_versions.sh
-        bash +x /tmp/delete_versions.sh -r us-east-1 -b bondlink-data-east -p "backups/mysql/us-east-2/devbackups" -d 10 -f
-
-        rm -f /tmp/dev_bondlink_backup.sh /tmp/delete_versions.sh
+        rm -f /tmp/dev_bondlink_backup.sh
 
 triggers:
   - id: schedule
@@ -303,4 +267,4 @@ errors:
     subject: "Dev database backups failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}

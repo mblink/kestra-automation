@@ -46,7 +46,7 @@ tasks:
           - |
             set -e
             echo "Syncing suricata logs for {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            /usr/local/bin/aws s3 sync /var/log/suricata/ s3://bondlink-data-east/suricata-logs/$HOSTNAME/ --exclude="*" --include="*.gz" --only-show-errors
+            sudo /usr/local/bin/aws s3 sync /var/log/suricata/ "s3://bondlink-data-east/suricata-logs/$(hostname)/" --exclude="*" --include="*.gz" --include="*.zst" --only-show-errors
 
 triggers:
   - id: schedule
@@ -64,4 +64,4 @@ errors:
     subject: "Kestra[staging_cron] Suricata Logs failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}

@@ -2,7 +2,7 @@ id: syslog-backup
 namespace: prod.backups
 
 description: |
-  Backup all /var/log/*.gz to S3. Migrated from Rundeck job Prod/Backups/Syslog
+  Backup all /var/log/*.gz and *.zst to S3. Migrated from Rundeck job Prod/Backups/Syslog
   Backup (f0d8e36d) — still executionEnabled/scheduleEnabled in the Rundeck source
   (filed under Prod/old_jobs in the rundeck-jobs export, but that's just an export
   organization artifact, not deprecation) — targets tags:prod, dispatch strategy
@@ -75,4 +75,4 @@ errors:
     subject: "Kestra[prod_cron] Syslog Backup failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}

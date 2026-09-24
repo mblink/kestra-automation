@@ -2,7 +2,7 @@ id: syslog-backup
 namespace: staging.backups
 
 description: |
-  Backup all /var/log/sudoers*.gz to S3. Migrated from Rundeck job
+  Backup all /var/log/sudoers*.gz and *.zst to S3. Migrated from Rundeck job
   Staging/Backups/Syslog Backup (cba07245) — targets tags:staging, which at export
   time resolved to ALL 9 nodes in the fetched s3://bondlink-rundeck/staging.xml
   inventory (every staging node carries that tag).
@@ -84,4 +84,4 @@ errors:
     subject: "Kestra[staging_cron] Syslog Backup failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}
