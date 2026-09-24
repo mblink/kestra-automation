@@ -25,7 +25,7 @@ description: Mint the narrowest AWS credential a task actually needs — read-on
 ```
 
 - Other flags: `--read-s3 <ARN>`, `--hours` (1–36), `--out`, `--name`, `--region`, `--print-policy` (show, don't mint).
-- The output file (mode 600: three `export`s + `unset AWS_PROFILE`) is sourced, never `cat`/`echo`ed: secrets must not reach argv (visible to `ps`, shell history), logs or the session transcript.
+- The output file (mode 600: three credential `export`s, `AWS_REGION`/`AWS_DEFAULT_REGION` set to `--region`, `unset AWS_PROFILE`) is sourced, never `cat`/`echo`ed: secrets must not reach argv (visible to `ps`, shell history), logs or the session transcript.
 - Only the mint needs `dangerouslyDisableSandbox` (it writes under `~/.aws`); the token works sandboxed (`*.amazonaws.com` is in `.claude/settings.json`'s allowed domains).
 - Before anything else, `aws sts get-caller-identity` must show `federated-user/agent-*`, not `user/<you>`.
 

@@ -50,10 +50,11 @@ while [ $# -gt 0 ]; do
     --region) REGION="$2"; shift 2 ;;
     --env) ENVIRONMENT="$2"; shift 2 ;;
     --read-bucket)
-      # `bondlink-data` means the whole bucket; `bondlink-data-east/weblogs/prod/*`
-      # means that prefix. Both become one object ARN.
+      # `bondlink-data` means the whole bucket; `bondlink-data-east/weblogs/prod/`
+      # means that prefix, trailing `*` or not. A single key is --read-s3's job.
       case "$2" in
-        */*) spec="$2" ;;
+        *\*) spec="$2" ;;
+        */*) spec="$2*" ;;
         *) spec="$2/*" ;;
       esac
       READ_OBJECTS[${#READ_OBJECTS[@]}]="arn:aws:s3:::${spec}"
@@ -220,6 +221,8 @@ install -m 600 /dev/null "$OUT"
   printf 'export AWS_ACCESS_KEY_ID=%s\n' "$AK"
   printf 'export AWS_SECRET_ACCESS_KEY=%s\n' "$SK"
   printf 'export AWS_SESSION_TOKEN=%s\n' "$ST"
+  printf 'export AWS_REGION=%s\n' "$REGION"
+  printf 'export AWS_DEFAULT_REGION=%s\n' "$REGION"
   printf 'unset AWS_PROFILE\n'
 } > "$OUT"
 unset AK SK ST CREDS
