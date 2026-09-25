@@ -20,6 +20,14 @@
             "command": "v=$(bash -c 'echo \"${BASH_VERSINFO[0]}\"' 2>/dev/null); [ \"${v:-0}\" -ge 5 ] 2>/dev/null || printf '%s\\n' '{\"systemMessage\":\"Claude Code runs its Bash tool in the first bash on PATH (CLAUDE_CODE_SHELL=bash), which is missing or older than 5. Run `brew install bash` and restart Claude Code.\",\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"The first bash on PATH is missing or older than 5, so Bash tool commands run in bash 3.2 or the login shell. Tell the user to run `brew install bash` and restart Claude Code.\"}}'"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "b=$(command -v bash) && [ -n \"$CLAUDE_ENV_FILE\" ] && printf \"export SHELL='%s'\\n\" \"$b\" >> \"$CLAUDE_ENV_FILE\"; exit 0"
+          }
+        ]
       }
     ]
   },
