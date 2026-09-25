@@ -15,7 +15,8 @@ description: |
   disabled to false.
 
   Targets the Woodpecker CI agents (Environment=prod, NodeType=woodpecker-agent,
-  running). Every reclaim is age-scoped (6h) because those hosts run live builds.
+  running) and starts each agent's salt-managed woodpecker-docker-clean.service, so
+  the age-scoped reclaim policy lives in one script owned by salt.
 
 tasks:
   - id: discover_drone_hosts
@@ -46,12 +47,16 @@ tasks:
           - |
             set -e
             echo "Cleaning docker resources on {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            cat > /tmp/clean_docker.sh <<'CLEAN_DOCKER_SCRIPT'
-            {{ read('clean_docker.sh') }}
-            CLEAN_DOCKER_SCRIPT
-            chmod +x /tmp/clean_docker.sh
-            /tmp/clean_docker.sh
-            rm -f /tmp/clean_docker.sh
+            unit=woodpecker-docker-clean.service
+            rc=0
+            sudo systemctl start "$unit" || rc=$?
+            systemctl show -p Result,ExecMainStatus,InvocationID "$unit"
+            sudo journalctl _SYSTEMD_INVOCATION_ID="$(systemctl show -p InvocationID --value "$unit")" --no-pager
+            result="$(systemctl show -p Result --value "$unit")"
+            if [ "$rc" -ne 0 ] || [ "$result" != success ]; then
+              echo "$unit failed: systemctl start exited $rc, Result=$result"
+              exit 1
+            fi
 
   - id: notify_success
     type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
