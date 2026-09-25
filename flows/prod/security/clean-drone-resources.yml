@@ -2,7 +2,7 @@ id: clean-drone-resources
 namespace: prod.security
 
 description: |
-  Prune docker resources on drone build agents. Migrated from Rundeck job
+  Prune docker resources on CI build agents. Migrated from Rundeck job
   Prod/Security/Clean Drone Resources (c18e2825) — currently DISABLED in Rundeck
   (executionEnabled: false); run manually from the Kestra UI to test.
 
@@ -14,21 +14,9 @@ description: |
   Rundeck — confirm/replace it with a real intended schedule before flipping
   disabled to false.
 
-  Original Rundeck node filter named proddroneagent01/02/03, but the current
-  s3://bondlink-rundeck/prod.xml inventory only has proddroneagent04/05/06 —
-  targets below use the hosts that actually exist today. Confirm against live
-  Rundeck whether 01-03 were renamed/decommissioned before trusting this mapping.
-
-  Original strategy was `node-first` (run full sequence on one host before the
-  next); translated here as 3 independent tasks with no dependsOn, matching this
-  repo's general parallel-vs-node-first convention since there's no real
-  cross-host dependency in a cleanup job like this.
-
-  Target hosts are now discovered dynamically via AWS instance tags
-  (Environment=prod, NodeType=drone-agent, running) instead of the hardcoded
-  proddroneagent04/05/06 list above — see bondlink-logs.yml for the
-  discover_*_hosts task shape and its AwsCLI/IMDS prerequisite notes (already
-  confirmed satisfied on prodsalt-arm, the host Kestra runs on).
+  Targets the Woodpecker CI agents (Environment=prod, NodeType=woodpecker-agent,
+  running) and starts each agent's salt-managed woodpecker-docker-clean.service, so
+  the age-scoped reclaim policy lives in one script owned by salt.
 
 tasks:
   - id: discover_drone_hosts
@@ -38,7 +26,7 @@ tasks:
     commands:
       - |
         aws ec2 describe-instances \
-          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=drone-agent" "Name=instance-state-name,Values=running" \
+          --filters "Name=tag:Environment,Values=prod" "Name=tag:NodeType,Values=woodpecker-agent" "Name=instance-state-name,Values=running" \
           --query "Reservations[].Instances[].{Name: Tags[?Key=='Name']|[0].Value, PrivateDnsName: NetworkInterfaces[0].PrivateDnsName}" \
           --output json > instances.json
 
@@ -59,24 +47,16 @@ tasks:
           - |
             set -e
             echo "Cleaning docker resources on {{ fromJson(taskrun.value).Name }} ({{ fromJson(taskrun.value).PrivateDnsName }})"
-            sudo docker images | grep '/bondlink' | awk '{print $3}' | xargs -r sudo docker rmi || echo 'Some application images could not be removed'
-            cleanImg() {
-              for img in $(
-                sudo docker images --filter "reference=668874212870.dkr.ecr.us-east-1.amazonaws.com/$1:build-*" \
-                  | awk '{ print $1":"$2 }' \
-                  | tail -n +2
-              ); do
-                sudo docker rmi "$img" || echo "Failed to remove $img"
-              done
-            }
-            cleanImg 'basex'
-            cleanImg 'drone-build-java-17'
-            cleanImg 'drone-cache'
-            cleanImg 'drone-ecr-auth'
-            sudo docker images -f 'dangling=true' -q | xargs -r sudo docker rmi || echo 'Some dangling images could not be removed'
-            sudo docker system prune --volumes --force
-            sudo docker network prune --force
-            sudo docker volume prune --all --force
+            unit=woodpecker-docker-clean.service
+            rc=0
+            sudo systemctl start "$unit" || rc=$?
+            systemctl show -p Result,ExecMainStatus,InvocationID "$unit"
+            sudo journalctl _SYSTEMD_INVOCATION_ID="$(systemctl show -p InvocationID --value "$unit")" --no-pager
+            result="$(systemctl show -p Result --value "$unit")"
+            if [ "$rc" -ne 0 ] || [ "$result" != success ]; then
+              echo "$unit failed: systemctl start exited $rc, Result=$result"
+              exit 1
+            fi
 
   - id: notify_success
     type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
