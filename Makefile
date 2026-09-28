@@ -24,6 +24,10 @@ test: ## Run the flow YAML test suite (static checks only, no AWS calls)
 sync: ## Sync Kestra flows
 	sudo bash +x /usr/local/bin/kestra-sync-flows.sh
 
+pull-sync: ## Sync Kestra flows
+	sudo -u bldeploy git pull
+	sudo bash +x /usr/local/bin/kestra-sync-flows.sh
+
 test-integration: ## Opt-in: run AwsCLI tasks for real against live AWS (needs real credentials; not in CI)
 	$(PYTEST) -v -s -m integration
 
