@@ -54,15 +54,57 @@ def run_plan(root: Path, env: str, group: str, plan_dir: Path) -> dict:
     cwd=directory, capture_output=True, text=True, check=False,
   )
   status = {0: 'clean', 2: 'drift'}.get(plan.returncode, 'error')
-  print(f'[{env}/{group}] {status} (exit {plan.returncode}) StdOut: {plan.stdout.strip()[-2000:]} StdErr: {plan.stderr.strip()[-2000:]}', file=sys.stderr)
+  print(f'[{env}/{group}] {status} (exit {plan.returncode})', file=sys.stderr)
+  if status == 'error':
+    print(f'[{env}/{group}] plan stderr: {plan.stderr.strip()[-2000:]}', file=sys.stderr)
   return {
     'group': group,
     'directory': str(directory),
     'status': status,
     'exit_code': plan.returncode,
     'plan_file': str(plan_file) if status == 'drift' else None,
+    'changes': describe_plan(directory, env, group, plan_file) if status == 'drift' else None,
     'message': plan.stderr.strip()[-2000:] if status == 'error' else None,
   }
+
+
+ACTION_LABELS = {
+  ('create',): '+ create',
+  ('delete',): '- delete',
+  ('update',): '~ update',
+  ('delete', 'create'): '-/+ replace',
+  ('create', 'delete'): '+/- replace',
+  ('read',): 'read',
+}
+
+
+def planned_changes(plan_json: dict) -> list[str]:
+  # Addresses and actions only: attribute values (user_data, keys) stay out of the
+  # notification email. The full diff goes to the task log via describe_plan.
+  changes = []
+  for change in plan_json.get('resource_changes') or []:
+    actions = tuple(change['change']['actions'])
+    if actions != ('no-op',):
+      changes.append(f'{ACTION_LABELS.get(actions, "/".join(actions))} {change["address"]}')
+  outputs = (plan_json.get('output_changes') or {}).values()
+  if not changes and any(tuple(output['actions']) != ('no-op',) for output in outputs):
+    changes.append('(output changes only)')
+  return changes
+
+
+def describe_plan(directory: Path, env: str, group: str, plan_file: Path) -> list[str]:
+  shown = subprocess.run(
+    ['tofu', 'show', '-no-color', str(plan_file)],
+    cwd=directory, capture_output=True, text=True, check=False,
+  )
+  print(f'[{env}/{group}] planned changes:\n{shown.stdout.strip() or shown.stderr.strip()}', file=sys.stderr)
+  shown_json = subprocess.run(
+    ['tofu', 'show', '-json', str(plan_file)],
+    cwd=directory, capture_output=True, text=True, check=False,
+  )
+  if shown_json.returncode != 0:
+    return [f'(tofu show -json failed: {shown_json.stderr.strip()[-500:]})']
+  return planned_changes(json.loads(shown_json.stdout))
 
 
 def write_summary(summary_file: Path, env: str, results: list[dict]) -> None:
@@ -77,6 +119,10 @@ def write_summary(summary_file: Path, env: str, results: list[dict]) -> None:
     groups = [result['group'] for result in results if result['status'] == status]
     if groups:
       lines.append(f'{status.upper()}: {", ".join(groups)}')
+  for result in results:
+    if result['status'] == 'drift':
+      lines += ['', f'{result["group"]}: {result["plan_file"]}']
+      lines += [f'  {change}' for change in result['changes']]
   summary_file.write_text('\n'.join(lines) + '\n')
 
 
