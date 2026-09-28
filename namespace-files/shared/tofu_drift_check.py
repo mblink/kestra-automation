@@ -54,7 +54,7 @@ def run_plan(root: Path, env: str, group: str, plan_dir: Path) -> dict:
     cwd=directory, capture_output=True, text=True, check=False,
   )
   status = {0: 'clean', 2: 'drift'}.get(plan.returncode, 'error')
-  print(f'[{env}/{group}] {status} (exit {plan.returncode})', file=sys.stderr)
+  print(f'[{env}/{group}] {status} (exit {plan.returncode}) StdOut: {plan.stdout.strip()[-2000:]} StdErr: {plan.stderr.strip()[-2000:]}', file=sys.stderr)
   return {
     'group': group,
     'directory': str(directory),
