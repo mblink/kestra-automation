@@ -28,9 +28,9 @@ from pathlib import Path
 import yaml
 
 SSH_COMMAND = "io.kestra.plugin.fs.ssh.Command"
-# Pebble is evaluated before the shell ever sees the text, so it is not shell. Newlines
-# are preserved so reported line numbers stay true.
-PEBBLE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+# Pebble ({{ }} and {% %}) is evaluated before the shell ever sees the text, so it is
+# not shell. Newlines are preserved so reported line numbers stay true.
+PEBBLE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
 # Quoted heredoc: <<'EOF' / <<-"EOF". Only the quoted form is inert -- an unquoted
 # heredoc is still expanded by zsh, so it is deliberately left in scope.
 HEREDOC = re.compile(r"<<-?\s*(['\"])([\w.-]+)\1")

@@ -3,7 +3,7 @@ OPERATION=$1; shift
 
 set -eo pipefail
 
-privateDsnByTagName() {
+privateDnsByTagName() {
   local tagName="$1"
   local dnsNames
   dnsNames="$(/usr/local/bin/aws ec2 describe-instances \
@@ -17,6 +17,25 @@ privateDsnByTagName() {
     return 1
   fi
   echo "$dnsNames"
+}
+
+
+environmentKestraWorker() {
+  local environment="$1"
+  local kestraWorkers
+  kestraWorkers="$(/usr/local/bin/aws ec2 describe-instances \
+    --filters "Name=tag:NodeType,Values=kestra-worker" "Name=tag:Environment,Values=$environment" "Name=instance-state-name,Values=running" \
+    --query "Reservations[].Instances[].NetworkInterfaces[].PrivateIpAddresses[].PrivateDnsName" \
+    --output text)"
+  local count
+  count=$(wc -w <<< "$kestraWorkers")
+  if [ "$count" -eq 0 ]; then
+    echo "No running kestra-worker found in environment=$environment" >&2
+    return 1
+  elif [ "$count" -gt 1 ]; then
+    kestraWorkers=$(cut -d' ' -f1 <<< "$kestraWorkers")
+  fi
+  echo "$kestraWorkers"
 }
 
 $OPERATION "$@"

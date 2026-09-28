@@ -22,9 +22,10 @@ from pathlib import Path
 import yaml
 
 SSH_COMMAND = "io.kestra.plugin.fs.ssh.Command"
-# Pebble is evaluated before the shell ever sees the text, so it is not shell and must
-# not be parsed as shell. Newlines are preserved so reported line numbers stay true.
-PEBBLE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+# Pebble ({{ }} and {% %}) is evaluated before the shell ever sees the text, so it is
+# not shell and must not be parsed as shell. Newlines are preserved so reported line
+# numbers stay true.
+PEBBLE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
 
 
 def tasks(node):
