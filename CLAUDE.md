@@ -77,7 +77,7 @@ commands:
 Host discovery:
 
 - **Fleet** — `AwsCLI` writes `instances.json`; `ForEach` `values: "{{ fromJson(read(outputs.<task>.outputFiles['instances.json'])) }}"`, per-host `{{ fromJson(taskrun.value).PrivateDnsName }}` (see `bondlink-logs.yml`).
-- **Exactly one host** — `namespace-files/shared/aws_query.sh privateDsnByTagName <Name tag>` writes `host.txt` (fails on 0 or >1 matches); `host: "{{ read(outputs.<task>.outputFiles['host.txt']) }}"`, no ForEach (see `staging/haproxy/certificate-renewal.yml`).
+- **Exactly one host** — `namespace-files/shared/aws_query.sh privateDnsByTagName <Name tag>` writes `host.txt` (fails on 0 or >1 matches); `host: "{{ read(outputs.<task>.outputFiles['host.txt']) }}"`, no ForEach (see `staging/haproxy/certificate-renewal.yml`).
 
 ## Pitfalls the test suite enforces
 
