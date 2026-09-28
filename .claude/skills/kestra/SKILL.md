@@ -5,113 +5,50 @@ description: Query the production Kestra API to find out why a flow failed — r
 
 # Reading production Kestra
 
-`bin/kestra-api.sh <path> [key==value | curl-args]...` is the client. It prepends
-`https://kestra.prod.bondlink.org/api/v1/main`, so paths start at `/executions`, `/flows`, `/logs`.
+`bin/kestra-api.sh <path> [key==value | curl-args]...` prepends `https://kestra.prod.bondlink.org/api/v1/main`; `key==value` becomes a URL-encoded query parameter, anything else goes to curl.
 
-```
+```bash
 bin/kestra-api.sh /executions/search namespace==prod.aws flowId==clean-basex-backups size==20
 bin/kestra-api.sh /logs/<executionId>/download
 bin/kestra-api.sh /flows/prod.aws/clean-basex-backups
 ```
 
-`key==value` becomes a URL-encoded query parameter; anything else is passed to curl.
+## Read-only is enforced by the client, not the server
 
-## The API is not read-only. The client is.
+OSS Kestra has no RBAC: basic auth is the single admin account (`pillar['kestra']['admin_username'/'admin_password']`, as used by salt's `sync-flows.sh.jinja2`), which can create/update/delete flows, trigger executions and edit namespace files. Scoped API tokens and service accounts are Enterprise-only; `--api-token` does not work here.
 
-This OSS deployment has **no RBAC**. Basic auth is a single admin account — the same
-`pillar['kestra']['admin_username'/'admin_password']` that `salt/kestra/bin/sync-flows.sh.jinja2`
-uses — and that credential can create, update and delete flows, trigger executions and edit
-namespace files. Scoped API tokens and service accounts are Enterprise-only; `--api-token` does not
-work here.
-
-So read-only is enforced client-side: the script always passes `--get` and rejects `-X`, `--request`,
-`-d`, `--data*`, `-F`, `--form` and `-T`, the flags curl needs to express a write. It pipes the
-credential to curl through `--config -`, so the secret never lands on disk and never appears in `ps`.
-The guard assumes Kestra mutates nothing on a GET, which matches its REST conventions but is not
-enforced by the server.
-
-**Never** use the credential to push flows. Production sync is a host-level `git pull` plus
-`kestra flow namespace update`, driven by salt. `.claude/settings.json` denies those commands.
+The script always passes `--get`, rejects `-X`, `--request`, `-d`, `--data*`, `-F`, `--form`, `-T`, and feeds the credential via `--config -` (never on disk or in `ps`). The guard assumes Kestra mutates nothing on a GET (its REST convention, not server-enforced). **Never use the credential to push flows** — sync is salt's `git pull` + `kestra flow namespace update`, and `.claude/settings.json` denies those commands.
 
 ## Diagnosing a failed flow
 
-1. **Find the execution.** Sort descending and read the `state.current` and `flowRevision` of each:
+1. **Find the execution** — `/executions/search … size==20`; read each `state.current` and `flowRevision` (table it with `python3 -c`; raw JSON is huge; `total` is the lifetime count).
+2. **Read the logs** — `/logs/<executionId>/download`, newest task last. The first `ERROR` line is the cause; the following `SSH command fails with exit status N` just reports the remote exit.
+3. **Compare revisions before reading any YAML.**
 
-   ```
-   bin/kestra-api.sh /executions/search namespace==prod.aws flowId==<flow> size==20
-   ```
+## Production runs a revision, not a branch
 
-   Pipe through `python3 -c` to table it — the raw JSON is enormous. `total` is the lifetime count.
+`flowRevision` increments on every sync and maps to no git ref, so your checkout is not evidence of what ran. Diagnose against the definition the API returns, and **`git fetch` before comparing anything to `main`** — a stale local `main` makes an ordinary merged regression look like an out-of-band deploy (it happened with PR #26: merged, synced, failed on its first scheduled run — the common case, and the one to expect).
 
-2. **Read the logs.** `/logs/<executionId>/download` returns plain text, newest task last. The first
-   `ERROR` line is the real cause; the `java.lang.Exception: SSH command fails with exit status N`
-   below it is only Kestra reporting that the remote shell exited non-zero.
-
-3. **Compare revisions before reading any YAML.** This is the step that is easy to skip and expensive
-   to skip.
-
-## What runs in production is a revision, not a branch
-
-Executions carry a `flowRevision`. Kestra increments it on every sync, and **it does not correspond
-to any git ref** — nothing in the API maps revision 8 back to a commit. Your checkout is not
-evidence of what is deployed.
-
-Two traps follow, and the second one caught this skill's own author:
-
-- Diagnose against the definition the API returns, not against whatever branch is checked out.
-- **`git fetch` before you compare anything to `main`.** A stale local `main` made revision 8 look
-  like an out-of-band deploy from an unmerged branch, and that framing survived several confident
-  paragraphs before it was checked. It was wrong: PR #26 merged at 2026-09-15T20:44Z, production
-  synced it, and the first scheduled run failed at 2026-09-16T10:00Z. An ordinary merge that
-  shipped a bug — the common case, and the one to expect.
-
-Always read the deployed definition back:
-
-```
+```bash
 bin/kestra-api.sh /flows/prod.aws/<flow> | python3 -c "
 import sys,json; d=json.load(sys.stdin)
 print('revision:', d['revision']); print(d['tasks'][0]['commands'][0])"
 ```
 
-A revision that changed on the day the failures started is the prime suspect. Walk the history —
-`SUCCESS` at revision 7 and `FAILED` at revision 8, first run after the bump, is a deployment
-regression, not a drifting-infrastructure problem.
+A revision bump on the day failures started (`SUCCESS` at N, `FAILED` from N+1) is a deployment regression. `{{ read('x.sh') }}` in the returned definition is unrendered; fetch the script with `/namespaces/<ns>/files path==/x.sh` — namespace files aren't versioned with the flow, so that's the current file, not necessarily the one that ran.
 
-`{{ read('x.sh') }}` in the returned definition is **unrendered**: the flow body holds the Pebble
-expression, and the namespace file is stored separately. Fetch the deployed script itself with
-`bin/kestra-api.sh /namespaces/<ns>/files path==/x.sh` — but note that namespace files are **not**
-versioned alongside the flow, so that returns the current file, not necessarily the one that ran.
+Inline `commands:` blocks run under `bldeploy`'s login shell, zsh (`ssh.Command` uses SSH exec) — a bug source invisible to shellcheck (`$HOSTNAME` empty, `status` read-only). See `CLAUDE.md` → "Pitfalls the test suite enforces".
 
-## The inline block runs zsh, and that is a bug source
-
-`ssh.Command` sends the `commands:` block over SSH exec, so the remote user's login shell runs it.
-`bldeploy`'s shell is `/bin/zsh` (`pillar/base/users/init.sls` in the salt repo). Only the inline
-block is zsh — the vendored scripts are written to `/tmp`, `chmod +x`'d and executed, so their
-`#!/usr/bin/env bash` shebang wins, and real bash applies there.
-
-Two production incidents came from this, both invisible to shellcheck:
-
-- `$HOSTNAME` is empty in zsh (it uses `$HOST`), which collapsed three staging hosts onto the S3 key
-  `suricata-logs//`. Use `$(hostname)`.
-- `status=0` — `status` is a read-only alias for `$?` in zsh, so the assignment aborted the task
-  under `set -e` before anything ran.
-
-`ci/lint/check_zsh_pitfalls.py` now gates the second class (read-only parameters, tied arrays like
-`path`, bash-only variables, zero-indexed subscripts). `ci/lint/check_ssh_commands.py` checks the
-same blocks as `/bin/sh`. Neither can be replaced by shellcheck's bash mode, which would pass both
-bugs, or by `zsh -n`, which only checks syntax.
-
-## Endpoints worth knowing
+## Endpoints
 
 | path | returns |
 |---|---|
-| `/executions/search` | execution list; `namespace`, `flowId`, `size`, `sort=state.startDate:desc` |
-| `/logs/<executionId>/download` | plain-text logs for one execution |
-| `/logs/<executionId>` | the same as JSON, with `minLevel=INFO` etc. |
-| `/flows/<namespace>/<id>` | the deployed definition and its `revision` |
-| `/flows/<namespace>/<id>/revisions` | every stored revision, oldest first |
+| `/executions/search` | executions; `namespace`, `flowId`, `size`, `sort=state.startDate:desc` |
+| `/logs/<executionId>/download` | plain-text logs |
+| `/logs/<executionId>` | JSON logs, `minLevel=INFO` etc. |
+| `/flows/<namespace>/<id>` | deployed definition + `revision` |
+| `/flows/<namespace>/<id>/revisions` | all stored revisions, oldest first |
 | `/namespaces/<namespace>/files/directory` | namespace-file listing |
-| `/namespaces/<namespace>/files` + `path==/x.sh` | one namespace file's contents |
+| `/namespaces/<namespace>/files` + `path==/x.sh` | one file's contents |
 
-The tenant segment is `main`, matching the `/ui/main/...` in browser URLs. A 401 rather than a 404
-means the path is right and only auth failed.
+Tenant segment is `main` (as in `/ui/main/...` URLs). A 401 (not 404) means the path is right and auth failed.
