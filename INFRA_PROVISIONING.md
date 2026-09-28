@@ -257,7 +257,21 @@ right call for anything template-free.
   `ec2.amazonaws.com`, so a `role_arn`+`credential_source` self-assume
   approach won't work if the bare-alias approach doesn't pan out.
 - `TF_VAR_aws_creation_key`/`TF_VAR_user_ssh_key` Kestra secrets don't exist
-  yet.
+  yet — still true for `shared.infra/provision-server.yml`'s prod path
+  (`prod/infra/provision-server.yml`, `KestraWorker`). Staging's own flows
+  (`staging.infra/drift-check.yml`, `staging.infra/provision-dummy.yml`) no
+  longer depend on this: they fetch `TF_VAR_aws_creation_key`/
+  `TF_VAR_user_ssh_key` directly from Secrets Manager
+  (`staging/kestra-worker/tf-aws-creation-key`,
+  `staging/kestra-worker/tf-user-ssh-key`) using `StagingKestraWorker`'s own
+  IMDS-derived credentials, gated by a dedicated KMS key
+  (`/src/infrastructure`'s `global/secretsmanager/kms.tf`,
+  `alias/staging-kestra-worker-secrets` — admins can write a value, only
+  `StagingKestraWorker` can read it back) instead of Kestra's own secret()
+  store. `shared.infra/provision-server.yml` itself is unchanged and still
+  needs the two Kestra secrets when invoked for either environment — mirror
+  this same KMS/Secrets-Manager pattern for `KestraWorker`/prod before
+  moving that flow (or the shared one) off Kestra's secret() store too.
 - Security-group reach hasn't been confirmed in either direction: Kestra's
   own host (prodsalt-arm) → the relevant worker, and that worker → its
   target minion(s).

@@ -1,0 +1,86 @@
+id: provision-dummy
+namespace: staging.infra
+
+description: |
+  Exercises the untested tofu plan -> Pause -> apply mechanics
+  (shared.infra/provision-server.yml has never been run for real, per
+  INFRA_PROVISIONING.md) against staging/kestra_dummy -- a random_pet resource with
+  zero AWS API calls -- before trusting that chain against real staging infrastructure.
+
+concurrency:
+  limit: 1
+  behavior: FAIL
+
+tasks:
+  - id: tofu_plan
+    type: io.kestra.plugin.fs.ssh.Command
+    host: stagingkestra01.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        export PATH="/usr/local/bin:$PATH"
+        TF_VAR_aws_creation_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-aws-creation-key --query SecretString --output text)
+        TF_VAR_user_ssh_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-user-ssh-key --query SecretString --output text)
+        export TF_VAR_aws_creation_key TF_VAR_user_ssh_key
+        export AWS_PROFILE=east
+        cd /src/infrastructure/staging/kestra_dummy
+        git pull
+        tofu init -input=false
+        tofu plan -input=false -out=/tmp/tfplan-dummy
+
+  - id: review_plan
+    type: io.kestra.plugin.core.flow.Pause
+    description: Review tofu_plan's log output before resuming -- nothing applies until this execution is manually resumed.
+
+  - id: tofu_apply
+    type: io.kestra.plugin.fs.ssh.Command
+    host: stagingkestra01.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        export PATH="/usr/local/bin:$PATH"
+        TF_VAR_aws_creation_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-aws-creation-key --query SecretString --output text)
+        TF_VAR_user_ssh_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-user-ssh-key --query SecretString --output text)
+        export TF_VAR_aws_creation_key TF_VAR_user_ssh_key
+        export AWS_PROFILE=east
+        cd /src/infrastructure/staging/kestra_dummy
+        tofu apply -input=false /tmp/tfplan-dummy
+        rm -f /tmp/tfplan-dummy
+
+  - id: notify_success
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Provision Dummy Success"
+    htmlContent: "Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} succeeded against staging/kestra_dummy."
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * 0"
+    timezone: UTC
+    disabled: true
+
+errors:
+  - id: notify_failure
+    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+    from: kestra@bondlink.com
+    to:
+      - jeff@bondlink.com
+    subject: "Kestra[manual] Provision Dummy Failed"
+    htmlContent: |
+      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
+      Failed task: {{ tasksWithState('FAILED')[0].id }}
