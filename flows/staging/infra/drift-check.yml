@@ -49,9 +49,6 @@ tasks:
     authMethod: PUBLIC_KEY
     privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
     strictHostKeyChecking: "no"
-    outputFiles:
-      - drift_results.json
-      - drift_summary.txt
     commands:
       - |
         set -e
@@ -68,9 +65,10 @@ tasks:
         chmod +x /tmp/tofu_drift_check.py
         /opt/saltstack/salt/bin/python3 /tmp/tofu_drift_check.py \
           --env staging --root /src/infrastructure --plan-dir /tmp/tofu-plans/staging \
-          --summary-file drift_summary.txt \
-          > drift_results.json
-        rm -f /tmp/tofu_drift_check.py
+          --summary-file /tmp/drift_summary.txt \
+          > /tmp/drift_results.json
+        /opt/saltstack/salt/bin/python3 -c 'import json, sys; print("::" + json.dumps(dict(outputs=dict(summary=open(sys.argv[1]).read()))) + "::")' /tmp/drift_summary.txt
+        rm -f /tmp/tofu_drift_check.py /tmp/drift_summary.txt
 
   - id: notify_result
     type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
@@ -79,7 +77,7 @@ tasks:
     to:
       - jeff@bondlink.com
     subject: "Kestra[staging_cron] Drift Check Report"
-    htmlContent: "<pre>{{ read(outputs.drift_check.outputFiles['drift_summary.txt']) }}</pre>"
+    htmlContent: "<pre>{{ outputs.drift_check.vars.summary }}</pre>"
 
   - id: await_review
     type: io.kestra.plugin.core.flow.Pause

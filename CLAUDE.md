@@ -87,6 +87,7 @@ Each of these was a real bug in a committed flow; each test in `tests/unit/test_
 - **No literal `{#` in `tasks`/`errors`/`triggers`** — Pebble reads it as a comment start, so bash `${#arr[@]}` fails at execution with `ParserException: Unclosed comment`. Move the script to a namespace file (`read()` output is never re-parsed). Top-level `description:` is exempt.
 - **`/opt/saltstack/salt/bin/python3`, never bare `python3`** or `#!/usr/bin/env python3` — system python3 (3.12) lacks `boto3`/`more_itertools`; salt onedir (3.14) has them. A bare invocation ignores the script's shebang.
 - **`fromJson(taskrun.value).Field`, never `taskrun.value.Field`** — `taskrun.value` is a JSON string.
+- **No `outputFiles:` on `ssh.Command`** — Kestra rejects the flow at sync (`Unrecognized field`). Print `::{"outputs":{"key":…}}::` to stdout and read `outputs.<task>.vars.key`.
 - **No notification task inside a `ForEach`** — it fires per iteration; put it after the loop.
 - **Lowercase AWS tag filter values** (`Values=prod`) — case-sensitive; a mismatch silently matches nothing.
 - **`ensure_salt_perms.sh` before any `salt-run`** (`tests/unit/test_salt_perms.py`) — fixes the getfacl/setfacl ACL on `/var/cache/salt/minion/roots/mtime_map`, without which it fails on permissions. Not needed for `salt-call` or bare `salt <target>`.
