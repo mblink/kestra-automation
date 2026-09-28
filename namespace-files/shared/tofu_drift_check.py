@@ -36,7 +36,7 @@ def run_plan(root: Path, env: str, group: str, plan_dir: Path) -> dict:
     cwd=directory, capture_output=True, text=True, check=False,
   )
   if init.returncode != 0:
-    print(f'[{env}/{group}] init failed', file=sys.stderr)
+    print(f'[{env}/{group}] init failed. Return code {init.returncode}. Stderr: {init.stderr.strip()[-2000:]}', file=sys.stderr)
     return {
       'group': group, 'directory': str(directory), 'status': 'error',
       'exit_code': init.returncode, 'message': init.stderr.strip()[-2000:],
