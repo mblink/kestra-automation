@@ -50,6 +50,21 @@ def test_it_examined_something():
 def test_catches_known_defects(tmp_path, snippet, rule):
     # Negative control: build a flow carrying the defect and confirm the gate
     # names it. Without this, test_repo_is_clean passing proves nothing.
+    r = run(root=probe_repo(tmp_path, snippet))
+    assert r.returncode == 1, f"gate passed a known defect:\n{r.stdout}{r.stderr}"
+    assert rule in r.stdout, f"expected {rule}, got:\n{r.stdout}"
+
+
+def test_ignores_pebble_tags(tmp_path):
+    # {% %} is rendered away before the shell runs; shellcheck would read it as
+    # a brace group (SC1054/SC1083).
+    snippet = ('tofu plan {% if inputs.x %}-replace="{{ inputs.x }}"{% endif %}\n'
+               "        {% if inputs.y %}\n        echo y\n        {% endif %}")
+    r = run(root=probe_repo(tmp_path, snippet))
+    assert r.returncode == 0, f"gate flagged Pebble tags:\n{r.stdout}{r.stderr}"
+
+
+def probe_repo(tmp_path, snippet):
     flow = tmp_path / "flows" / "prod" / "probe"
     flow.mkdir(parents=True)
     (flow / "probe.yml").write_text(
@@ -59,6 +74,4 @@ def test_catches_known_defects(tmp_path, snippet, rule):
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    r = run(root=tmp_path)
-    assert r.returncode == 1, f"gate passed a known defect:\n{r.stdout}{r.stderr}"
-    assert rule in r.stdout, f"expected {rule}, got:\n{r.stdout}"
+    return tmp_path
