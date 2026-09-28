@@ -1,5 +1,6 @@
 id: provision-server
 namespace: prod.infra
+disabled: true
 
 description: |
   Thin, prod-scoped wrapper around shared.infra/provision-server.yml — see

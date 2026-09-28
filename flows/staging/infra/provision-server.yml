@@ -1,5 +1,6 @@
 id: provision-server
 namespace: staging.infra
+disabled: true
 
 description: |
   Thin, staging-scoped wrapper around shared.infra/provision-server.yml —
@@ -23,7 +24,7 @@ concurrency:
 inputs:
   - id: server_name
     type: STRING
-    defaults: "ai-builds"
+    defaults: ""
   - id: resource_address
     type: STRING
     defaults: ""

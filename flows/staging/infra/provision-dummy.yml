@@ -1,5 +1,6 @@
 id: provision-dummy
 namespace: staging.infra
+disabled: true
 
 description: |
   Exercises the untested tofu plan -> Pause -> apply mechanics

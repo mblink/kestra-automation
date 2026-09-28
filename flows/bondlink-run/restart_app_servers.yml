@@ -1,5 +1,6 @@
 id: saltrun-certificate-renewal
 namespace: bondlink-jobs.deploy
+disabled: true
 
 description: |
   Restart all application servers.
