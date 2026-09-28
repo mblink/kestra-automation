@@ -64,6 +64,17 @@ def test_ssh_command_tasks_do_not_use_namespace_files_property(flow, flow_path):
         )
 
 
+
+def test_ssh_command_tasks_do_not_use_output_files_property(flow, flow_path):
+    # ssh.Command has no outputFiles: - the flow fails to parse at sync time
+    # ("Unrecognized field"). Its files live on the remote host anyway; print a
+    # ::{"outputs":{...}}:: line and read it back as outputs.<task>.vars.<key>.
+    for task in find_tasks_of_type(flow, "io.kestra.plugin.fs.ssh.Command"):
+        assert "outputFiles" not in task, (
+            f"{flow_path}: ssh.Command task '{task.get('id')}' sets "
+            f"outputFiles:, which ssh.Command does not support"
+        )
+
 def _iter_tasks_nested_in_foreach(node):
     """Yield every task dict that lives inside a ForEach's own tasks: list -
     i.e. runs once per iteration - anywhere in the flow."""

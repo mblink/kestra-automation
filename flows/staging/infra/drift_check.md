@@ -11,10 +11,11 @@ against its own persistent `/src/infrastructure` checkout (same assumption
 It reports clean/drift/error per group and pauses for human review; it never applies anything.
 The post-pause step re-runs the same plan rather than doing nothing on resume.
 
-`namespace-files/shared/tofu_drift_check.py` writes both the full JSON (`drift_results.json`) and
-a short plain-text summary (`drift_summary.txt`, via `--summary-file`) — the notification embeds
-the latter verbatim with `{{ read(outputs.drift_check.outputFiles['drift_summary.txt']) }}`,
-avoiding any need to compute an aggregate inside a Pebble template.
+`namespace-files/shared/tofu_drift_check.py` writes both the full JSON (`/tmp/drift_results.json`
+on the worker) and a short plain-text summary (via `--summary-file`). `ssh.Command` has no
+`outputFiles:`, so the task prints the summary as a `::{"outputs":{"summary":…}}::` line and the
+notification embeds it verbatim with `{{ outputs.drift_check.vars.summary }}`, avoiding any need to
+compute an aggregate inside a Pebble template.
 
 For "some sort of link and information to apply the plans" (the original ask): each drifted
 group's plan file path is included in the summary. Kestra has no file-hosting or hyperlink
