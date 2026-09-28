@@ -38,4 +38,4 @@ generate-error-block: ## Print the canonical errors: block template (TODO: real 
 	@echo '    subject: "REPLACE ME"'
 	@echo '    htmlContent: |'
 	@echo '      Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.'
-	@echo '      Failed task: {{ tasksWithState('"'"'FAILED'"'"')[0].id }}'
+	@echo '      Failed task: {{ tasksWithState('"'"'FAILED'"'"')[0].taskId }}'

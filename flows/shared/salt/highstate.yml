@@ -100,4 +100,4 @@ errors:
     subject: "Kestra[manual] Salt Highstate Failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}
