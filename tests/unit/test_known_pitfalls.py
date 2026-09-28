@@ -17,6 +17,7 @@ BAD_AWS_TAG_CASING = re.compile(r"Values=Staging\b|Values=Prod\b")
 NOTIFICATION_TYPE_MARKER = "notifications."
 BARE_AWS_INVOCATION = re.compile(r"(?:^|[|;`]|\$\()\s*aws\b")
 HOSTNAME_SHELL_VARIABLE = re.compile(r"\$\{?HOSTNAME\b")
+TASKS_WITH_STATE_ID = re.compile(r"tasksWithState\([^)]*\)\[\d+\]\.id\b")
 
 
 def test_no_bare_taskrun_value_field_access(flow, flow_path):
@@ -73,6 +74,16 @@ def test_ssh_command_tasks_do_not_use_output_files_property(flow, flow_path):
         assert "outputFiles" not in task, (
             f"{flow_path}: ssh.Command task '{task.get('id')}' sets "
             f"outputFiles:, which ssh.Command does not support"
+        )
+
+
+def test_tasks_with_state_entries_use_task_id(flow, flow_path):
+    # tasksWithState() entries carry taskId/state/value, not id - `[0].id`
+    # makes the errors: notification itself fail ("Unable to find `id`"),
+    # hiding the real failure.
+    for value in iter_strings(flow):
+        assert not TASKS_WITH_STATE_ID.search(value), (
+            f"{flow_path}: tasksWithState(...)[n].id - use .taskId: {value!r}"
         )
 
 def _iter_tasks_nested_in_foreach(node):

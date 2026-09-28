@@ -17,10 +17,10 @@ description: |
   StagingKestraWorker's own IMDS-derived credentials, not Kestra's secret() store -- decryption
   is gated by this role's own IAM+KMS grant (global/secretsmanager/kms.tf in /src/infrastructure,
   alias/staging-kestra-worker-secrets), not by who can read Kestra's secret store or flow logs.
-  Deliberately no --profile/AWS_PROFILE on those two calls specifically, ahead of exporting
-  AWS_PROFILE=east for tofu below -- a bare AWS CLI call with no profile at all falls through to
-  IMDS unambiguously, sidestepping the still-open question of whether a *named* profile with no
-  explicit credentials does the same (see INFRA_PROVISIONING.md's open gaps).
+  /src/infrastructure's provider.tf hardcodes named profiles (default/east/ohio/oregon), which
+  don't exist in bldeploy's environment, so each tofu task points AWS_CONFIG_FILE at
+  namespace-files/shared/aws_instance_role_profiles.ini: those names with regions and no
+  credentials, so the SDK falls through to StagingKestraWorker's instance role.
 
 concurrency:
   limit: 1
@@ -56,6 +56,10 @@ tasks:
         TF_VAR_aws_creation_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-aws-creation-key --query SecretString --output text)
         TF_VAR_user_ssh_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-user-ssh-key --query SecretString --output text)
         export TF_VAR_aws_creation_key TF_VAR_user_ssh_key
+        cat > /tmp/kestra_aws_config <<'AWS_CONFIG'
+        {{ read('aws_instance_role_profiles.ini', namespace='shared') }}
+        AWS_CONFIG
+        export AWS_CONFIG_FILE=/tmp/kestra_aws_config
         export AWS_PROFILE=east
         cd /src/infrastructure
         git pull
@@ -98,6 +102,10 @@ tasks:
         TF_VAR_aws_creation_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-aws-creation-key --query SecretString --output text)
         TF_VAR_user_ssh_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-user-ssh-key --query SecretString --output text)
         export TF_VAR_aws_creation_key TF_VAR_user_ssh_key
+        cat > /tmp/kestra_aws_config <<'AWS_CONFIG'
+        {{ read('aws_instance_role_profiles.ini', namespace='shared') }}
+        AWS_CONFIG
+        export AWS_CONFIG_FILE=/tmp/kestra_aws_config
         export AWS_PROFILE=east
         cd /src/infrastructure
         cat > /tmp/tofu_drift_check.py <<'DRIFT_SCRIPT'
@@ -125,4 +133,4 @@ errors:
     subject: "Kestra[staging_cron] Drift Check Failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}

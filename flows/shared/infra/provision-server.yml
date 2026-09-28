@@ -113,6 +113,10 @@ tasks:
       - |
         set -e
         export PATH="/usr/local/bin:$PATH"
+        cat > /tmp/kestra_aws_config <<'AWS_CONFIG'
+        {{ read('aws_instance_role_profiles.ini', namespace='shared') }}
+        AWS_CONFIG
+        export AWS_CONFIG_FILE=/tmp/kestra_aws_config
         export AWS_PROFILE={{ inputs.aws_profile }}
         export TF_VAR_aws_creation_key="{{ secret('TF_AWS_CREATION_KEY') }}"
         export TF_VAR_user_ssh_key="{{ secret('TF_USER_SSH_KEY') }}"
@@ -137,6 +141,10 @@ tasks:
       - |
         set -e
         export PATH="/usr/local/bin:$PATH"
+        cat > /tmp/kestra_aws_config <<'AWS_CONFIG'
+        {{ read('aws_instance_role_profiles.ini', namespace='shared') }}
+        AWS_CONFIG
+        export AWS_CONFIG_FILE=/tmp/kestra_aws_config
         export AWS_PROFILE={{ inputs.aws_profile }}
         export TF_VAR_aws_creation_key="{{ secret('TF_AWS_CREATION_KEY') }}"
         export TF_VAR_user_ssh_key="{{ secret('TF_USER_SSH_KEY') }}"
@@ -195,4 +203,4 @@ errors:
     subject: "Kestra[manual] Provision Server Failed"
     htmlContent: |
       Execution {{ execution.id }} of {{ flow.namespace }}.{{ flow.id }} failed.
-      Failed task: {{ tasksWithState('FAILED')[0].id }}
+      Failed task: {{ tasksWithState('FAILED')[0].taskId }}
