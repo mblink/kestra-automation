@@ -26,9 +26,22 @@ concurrency:
   behavior: FAIL
 
 tasks:
+  - id: get_target_host
+    type: io.kestra.plugin.aws.cli.AwsCLI
+    outputFiles:
+      - host.txt
+    commands:
+      - |
+        set -eo pipefail
+        cat > /tmp/aws_query.sh <<'AWS_QUERY_SCRIPT'
+        {{ read('aws_query.sh', namespace='shared') }}
+        AWS_QUERY_SCRIPT
+        chmod +x /tmp/aws_query.sh
+        /tmp/aws_query.sh environmentKestraWorker staging | tr -d '\n' > host.txt
+        rm -f /tmp/aws_query.sh
   - id: tofu_plan
     type: io.kestra.plugin.fs.ssh.Command
-    host: stagingkestra01.staging.vpc
+    host: "{{ read(outputs.get_target_host.outputFiles['host.txt']) }}"
     port: "2007"
     username: bldeploy
     authMethod: PUBLIC_KEY
