@@ -2,15 +2,19 @@ id: drift-check
 namespace: staging.infra
 
 description: |
-  Nightly plan-only sweep of every staging server-group directory with a non-empty
-  `servers:` block, via namespace-files/shared/tofu_drift_check.py. Reports clean/drift/error
-  per group; never applies. See flows/staging/infra/drift_check.md for background and the
-  still-open question of how a follow-up "apply what drifted" flow should work.
+  Nightly plan of every staging server-group directory with a non-empty `servers:` block, via
+  namespace-files/shared/tofu_drift_check.py, then a human-gated apply of the groups you pick.
+  See flows/staging/infra/drift_check.md for background.
 
-  Pause has no onResume inputs (a bare Pause, matching the one existing precedent in
-  shared.infra/provision-server.yml): there's no decision to gate yet, since apply isn't wired
-  up here. The continue-after-resume step re-runs the same plan rather than doing nothing, so
-  resuming has a visible, safe effect.
+  When any group drifts, notify_result emails the per-group changes and the execution pauses at
+  await_review. Resuming asks for groups_to_apply, a multi-select of this run's drifted groups
+  that defaults to none: resuming with nothing selected applies nothing. apply_selected applies
+  each chosen group's saved plan from this run (tofu rejects a plan the state has moved past),
+  keeps going past a failed group, and fails the task if any did. staging/db-prod-test and
+  staging/ops set use_lockfile = true, which no role can write, so their applies fail on the lock.
+
+  Plans live under /tmp/tofu-plans/run-<execution id>/ on the worker; cleanup_plans (finally:)
+  removes them whether the run succeeds, fails or is killed.
 
   TF_VAR_aws_creation_key/TF_VAR_user_ssh_key are fetched directly from Secrets Manager
   (staging/kestra-worker/tf-aws-creation-key, staging/kestra-worker/tf-user-ssh-key) using
@@ -68,28 +72,116 @@ tasks:
         DRIFT_SCRIPT
         chmod +x /tmp/tofu_drift_check.py
         /opt/saltstack/salt/bin/python3 /tmp/tofu_drift_check.py \
-          --env staging --root /src/infrastructure --plan-dir /tmp/tofu-plans/staging \
-          --summary-file /tmp/drift_summary.txt \
-          > /tmp/drift_results.json
-        /opt/saltstack/salt/bin/python3 -c 'import json, sys; print("::" + json.dumps(dict(outputs=dict(summary=open(sys.argv[1]).read()))) + "::")' /tmp/drift_summary.txt
-        rm -f /tmp/tofu_drift_check.py /tmp/drift_summary.txt
+          --env staging --root /src/infrastructure \
+          --plan-dir /tmp/tofu-plans/run-{{ execution.id }} --kestra-outputs
+        rm -f /tmp/tofu_drift_check.py
 
-  - id: notify_result
-    type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
-    sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
-    from: kestra@bondlink.com
-    to:
-      - jeff@bondlink.com
-    subject: "Kestra[staging_cron] Drift Check Report"
-    htmlContent: "<pre>{{ outputs.drift_check.vars.summary }}</pre>"
+  - id: review_if_drifted
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.drift_check.vars.drifted_groups | length > 0 }}"
+    then:
+      - id: notify_result
+        type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+        sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+        from: kestra@bondlink.com
+        to:
+          - jeff@bondlink.com
+        subject: "Kestra[staging_cron] Drift Check Report"
+        htmlContent: |
+          <p>infrastructure at <code>{{ outputs.drift_check.vars.infra_commit }}</code>. Full diffs are in the drift_check task log; resume and pick the groups to apply:
+          <a href="https://kestra.prod.bondlink.org/ui/main/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}">{{ execution.id }}</a></p>
+          <pre>{{ outputs.drift_check.vars.summary }}</pre>
 
-  - id: await_review
-    type: io.kestra.plugin.core.flow.Pause
-    description: Review notify_result's report before resuming — nothing else applies, this only re-runs the plan.
+      - id: await_review
+        type: io.kestra.plugin.core.flow.Pause
+        description: Review drift_check's log, then resume and select the groups to apply -- none are applied unless selected.
+        onResume:
+          - id: groups_to_apply
+            type: MULTISELECT
+            expression: "{{ outputs.drift_check.vars.drifted_groups }}"
+            required: false
+            description: Drifted groups whose saved plan from this run should be applied. Leave empty to apply nothing.
 
-  - id: recheck_after_resume
+      - id: apply_if_selected
+        type: io.kestra.plugin.core.flow.If
+        condition: "{{ outputs.await_review.onResume.groups_to_apply | default([]) | length > 0 }}"
+        then:
+          - id: apply_selected
+            type: io.kestra.plugin.fs.ssh.Command
+            host: "{{ read(outputs.get_target_host.outputFiles['host.txt']) }}"
+            port: "2007"
+            username: bldeploy
+            authMethod: PUBLIC_KEY
+            privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+            strictHostKeyChecking: "no"
+            commands:
+              - |
+                set -e
+                export PATH="/usr/local/bin:$PATH"
+                cat > /tmp/kestra_aws_config <<'AWS_CONFIG'
+                {{ read('aws_instance_role_profiles.ini', namespace='shared') }}
+                AWS_CONFIG
+                export AWS_CONFIG_FILE=/tmp/kestra_aws_config
+                export AWS_PROFILE=east
+                selection=/tmp/tofu-plans/run-{{ execution.id }}/selection
+                cat > "$selection.json" <<'SELECTION_JSON'
+                {"groups":
+                {{ outputs.await_review.onResume.groups_to_apply | toJson }}
+                , "plans":
+                {{ outputs.drift_check.vars.plans | toJson }}
+                }
+                SELECTION_JSON
+                /opt/saltstack/salt/bin/python3 -c 'import json, sys; s = json.load(open(sys.argv[1])); print("\n".join(g + " " + (s["plans"].get(g) or "") for g in s["groups"]))' "$selection.json" > "$selection.txt"
+                applied=""
+                failed=""
+                while read -r group plan; do
+                  if [ -z "$plan" ]; then
+                    echo "[$group] no saved plan from this run; not applied"
+                    failed="$failed $group"
+                  elif (cd "/src/infrastructure/staging/$group" && tofu apply -input=false -no-color "$plan" < /dev/null); then
+                    applied="$applied $group"
+                  else
+                    echo "[$group] apply failed"
+                    failed="$failed $group"
+                  fi
+                done < "$selection.txt"
+                /opt/saltstack/salt/bin/python3 -c 'import json, sys; print("::" + json.dumps(dict(outputs=dict(applied=sys.argv[1].split(), failed=sys.argv[2].split()))) + "::")' "$applied" "$failed"
+                [ -z "$failed" ]
+
+          - id: notify_applied
+            type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+            sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+            from: kestra@bondlink.com
+            to:
+              - jeff@bondlink.com
+            subject: "Kestra[staging_cron] Drift Apply Succeeded"
+            htmlContent: |
+              <p>Applied {{ outputs.apply_selected.vars.applied | join(', ') }} at infrastructure <code>{{ outputs.drift_check.vars.infra_commit }}</code>. Apply logs are in the apply_selected task log.</p>
+              <pre>{{ outputs.drift_check.vars.summary }}</pre>
+
+    else:
+      - id: notify_clean
+        type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
+        sendgridApiKey: "{{ secret('SENDGRID_API_KEY') }}"
+        from: kestra@bondlink.com
+        to:
+          - jeff@bondlink.com
+        subject: "Kestra[staging_cron] Drift Check Report: No Drift"
+        htmlContent: |
+          <p>infrastructure at <code>{{ outputs.drift_check.vars.infra_commit }}</code>; nothing drifted.</p>
+          <pre>{{ outputs.drift_check.vars.summary }}</pre>
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 8 * * *"
+    timezone: UTC
+    disabled: true
+
+finally:
+  - id: cleanup_plans
     type: io.kestra.plugin.fs.ssh.Command
-    host: stagingkestra01.staging.vpc
+    host: "{{ read(outputs.get_target_host.outputFiles['host.txt']) }}"
     port: "2007"
     username: bldeploy
     authMethod: PUBLIC_KEY
@@ -98,30 +190,12 @@ tasks:
     commands:
       - |
         set -e
-        export PATH="/usr/local/bin:$PATH"
-        TF_VAR_aws_creation_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-aws-creation-key --query SecretString --output text)
-        TF_VAR_user_ssh_key=$(/usr/local/bin/aws secretsmanager get-secret-value --region us-east-1 --secret-id staging/kestra-worker/tf-user-ssh-key --query SecretString --output text)
-        export TF_VAR_aws_creation_key TF_VAR_user_ssh_key
-        cat > /tmp/kestra_aws_config <<'AWS_CONFIG'
-        {{ read('aws_instance_role_profiles.ini', namespace='shared') }}
-        AWS_CONFIG
-        export AWS_CONFIG_FILE=/tmp/kestra_aws_config
-        export AWS_PROFILE=east
-        cd /src/infrastructure
-        cat > /tmp/tofu_drift_check.py <<'DRIFT_SCRIPT'
-        {{ read('tofu_drift_check.py', namespace='shared') }}
-        DRIFT_SCRIPT
-        chmod +x /tmp/tofu_drift_check.py
-        /opt/saltstack/salt/bin/python3 /tmp/tofu_drift_check.py \
-          --env staging --root /src/infrastructure --plan-dir /tmp/tofu-plans/staging
-        rm -f /tmp/tofu_drift_check.py
-
-triggers:
-  - id: schedule
-    type: io.kestra.plugin.core.trigger.Schedule
-    cron: "0 8 * * *"
-    timezone: UTC
-    disabled: true
+        cat > /tmp/tofu_plan_cleanup.sh <<'CLEANUP_SCRIPT'
+        {{ read('tofu_plan_cleanup.sh', namespace='shared') }}
+        CLEANUP_SCRIPT
+        chmod +x /tmp/tofu_plan_cleanup.sh
+        /tmp/tofu_plan_cleanup.sh {{ execution.id }}
+        rm -f /tmp/tofu_plan_cleanup.sh
 
 errors:
   - id: notify_failure

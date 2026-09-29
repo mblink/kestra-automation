@@ -74,10 +74,11 @@ commands:
     rm -f /tmp/x.sh
 ```
 
-Host discovery:
+Host discovery — every lookup returns the AWS `PrivateDnsName`, which the Kestra server can resolve for both environments; the `*.staging.vpc` / `*.bondlink.vpc` zones each resolve only in their own:
 
 - **Fleet** — `AwsCLI` writes `instances.json`; `ForEach` `values: "{{ fromJson(read(outputs.<task>.outputFiles['instances.json'])) }}"`, per-host `{{ fromJson(taskrun.value).PrivateDnsName }}` (see `bondlink-logs.yml`).
 - **Exactly one host** — `namespace-files/shared/aws_query.sh privateDnsByTagName <Name tag>` writes `host.txt` (fails on 0 or >1 matches); `host: "{{ read(outputs.<task>.outputFiles['host.txt']) }}"`, no ForEach (see `staging/haproxy/certificate-renewal.yml`).
+- **The environment's Kestra worker** — `aws_query.sh environmentKestraWorker <env>` (tags `NodeType=kestra-worker`, `Environment=<env>`); the first task of every tofu flow. `tofu-flows` skill.
 
 ## Pitfalls the test suite enforces
 
@@ -91,7 +92,7 @@ Each of these was a real bug in a committed flow; each test in `tests/unit/test_
 - **No notification task inside a `ForEach`** — it fires per iteration; put it after the loop.
 - **Lowercase AWS tag filter values** (`Values=prod`) — case-sensitive; a mismatch silently matches nothing.
 - **`ensure_salt_perms.sh` before any `salt-run`** (`tests/unit/test_salt_perms.py`) — fixes the getfacl/setfacl ACL on `/var/cache/salt/minion/roots/mtime_map`, without which it fails on permissions. Not needed for `salt-call` or bare `salt <target>`.
-- **`tofu apply` only in the flows `tests/unit/test_tofu_apply_scope.py` lists**, never in a namespace file — plan-only flows (drift-check) share scripts and boilerplate with the apply flows.
+- **`tofu apply` only in the flows `tests/unit/test_tofu_apply_scope.py` lists**, never in a namespace file — every tofu flow shares scripts and boilerplate, so an apply can arrive by copy/paste. Those flows write plans only under `/tmp/tofu-plans/run-{{ execution.id }}/` and remove it in `finally:` with `namespace-files/shared/tofu_plan_cleanup.sh {{ execution.id }}`.
 - **A prod flow's `errors:` must not mention staging, and vice versa** (`tests/unit/test_environment_isolation.py`) — that block is pure boilerplate, so a cross-environment reference is always a copy/paste mistake.
 
 Lint-enforced: the inline `commands:` block runs in `bldeploy`'s login shell, **zsh** (salt's `pillar/base/users/init.sls`); vendored scripts are written to `/tmp`, `chmod +x`'d and executed, so their bash shebang wins. Use `$(hostname)`, not `$HOSTNAME` (empty in zsh); never assign `status` (read-only `$?` alias in zsh; aborts under `set -e` before anything runs). Both shipped to production. `ci/lint/check_zsh_pitfalls.py` gates read-only parameters, tied arrays like `path`, bash-only variables and zero-indexed subscripts; `ci/lint/check_ssh_commands.py` checks the blocks as `/bin/sh`. Shellcheck's bash mode (passes both bugs) and `zsh -n` (syntax only) are no substitute.

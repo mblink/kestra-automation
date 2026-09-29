@@ -34,15 +34,23 @@ def test_planned_changes_reports_output_only_drift():
     assert drift.planned_changes(plan) == ["(output changes only)"]
 
 
-def test_summary_names_plan_file_and_changes(tmp_path):
-    results = [
-        {"group": "haproxy", "status": "clean"},
-        {"group": "util_hosts", "status": "drift", "plan_file": "/tmp/p/util.plan",
-         "changes": ["~ update aws_instance.util"]},
-    ]
-    out = tmp_path / "summary.txt"
-    drift.write_summary(out, "staging", results)
-    lines = out.read_text().splitlines()
+RESULTS = [
+    {"group": "haproxy", "status": "clean"},
+    {"group": "util_hosts", "status": "drift", "plan_file": "/tmp/p/util.plan",
+     "changes": ["~ update aws_instance.util"]},
+]
+
+
+def test_summary_names_plan_file_and_changes():
+    lines = drift.summary_text("staging", RESULTS).splitlines()
     assert lines[1] == "clean=1 drift=1 error=0 skipped=0"
     assert lines[2] == "DRIFT: util_hosts"
     assert lines[4:] == ["util_hosts: /tmp/p/util.plan", "  ~ update aws_instance.util"]
+
+
+def test_kestra_outputs_map_each_drifted_group_to_its_plan():
+    out = drift.kestra_outputs("staging", RESULTS, "abc123 subject")
+    assert out["drifted_groups"] == ["util_hosts"]
+    assert out["plans"] == {"util_hosts": "/tmp/p/util.plan"}
+    assert out["infra_commit"] == "abc123 subject"
+    assert out["summary"] == drift.summary_text("staging", RESULTS)

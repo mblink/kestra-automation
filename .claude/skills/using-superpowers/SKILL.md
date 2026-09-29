@@ -21,6 +21,7 @@ Flow layout, task anatomy and the test-enforced pitfalls are in `CLAUDE.md`; rea
 | A production flow failed, a `kestra.prod.bondlink.org` URL, or what revision is actually deployed | `kestra` |
 | Finding logs or backups in S3; writing or changing anything that globs, lists or deletes under `weblogs/`, `syslogs/`, `backups/mysql/` | `s3-backup-layout`, `scoped-aws-credentials` |
 | Reaching AWS at all — `make test-integration`, a describe, listing a bucket, any investigation | `scoped-aws-credentials` |
+| Writing or changing a flow that runs `tofu`, or `tofu_drift_check.py` / `tofu_plan_cleanup.sh` / `aws_query.sh` | `tofu-flows` |
 | A CI build failed, a PR build never started or hangs, or editing `.woodpecker.yml` | `woodpecker` |
 | Watching a PR's build to completion | `woodpecker` (`watch-pr-build.sh`) |
 

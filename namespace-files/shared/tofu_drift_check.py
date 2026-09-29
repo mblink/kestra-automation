@@ -1,9 +1,8 @@
 #!/usr/bin/env /opt/saltstack/salt/bin/python3
-# Plans every non-empty server group in config/servers_<env>.yaml and reports
-# drift as JSON on stdout. Progress goes to stderr so a caller that redirects
-# stdout to a result file (`... > drift_results.json`) still sees per-group
-# progress in the Kestra task log. See kestra-automation's
-# flows/staging/infra/drift_check.md for the flow this backs.
+# Plans every non-empty server group in config/servers_<env>.yaml (or --group) and reports drift
+# on stdout: raw JSON, or with --kestra-outputs the ::{"outputs": ...}:: line an ssh.Command turns
+# into outputs.<task>.vars. Progress and full plan diffs go to stderr, i.e. the Kestra task log.
+# See kestra-automation's flows/staging/infra/drift_check.md.
 import argparse
 import json
 import subprocess
@@ -107,7 +106,7 @@ def describe_plan(directory: Path, env: str, group: str, plan_file: Path) -> lis
   return planned_changes(json.loads(shown_json.stdout))
 
 
-def write_summary(summary_file: Path, env: str, results: list[dict]) -> None:
+def summary_text(env: str, results: list[dict]) -> str:
   counts = {status: 0 for status in ('clean', 'drift', 'error', 'skipped')}
   for result in results:
     counts[result['status']] += 1
@@ -123,7 +122,25 @@ def write_summary(summary_file: Path, env: str, results: list[dict]) -> None:
     if result['status'] == 'drift':
       lines += ['', f'{result["group"]}: {result["plan_file"]}']
       lines += [f'  {change}' for change in result['changes']]
-  summary_file.write_text('\n'.join(lines) + '\n')
+  return '\n'.join(lines) + '\n'
+
+
+def infra_commit(root: Path) -> str:
+  log = subprocess.run(
+    ['git', '-C', str(root), 'log', '-1', '--format=%h %s'],
+    capture_output=True, text=True, check=False,
+  )
+  return log.stdout.strip() or '(unknown)'
+
+
+def kestra_outputs(env: str, results: list[dict], commit: str) -> dict:
+  drifted = [result for result in results if result['status'] == 'drift']
+  return {
+    'summary': summary_text(env, results),
+    'drifted_groups': [result['group'] for result in drifted],
+    'plans': {result['group']: result['plan_file'] for result in drifted},
+    'infra_commit': commit,
+  }
 
 
 def main() -> int:
@@ -132,7 +149,7 @@ def main() -> int:
   parser.add_argument('--root', required=True, type=Path, help='infrastructure repo checkout, e.g. /src/infrastructure')
   parser.add_argument('--plan-dir', required=True, type=Path, help='directory to write .plan outfiles into')
   parser.add_argument('--group', action='append', help='limit to one or more specific groups; default is every group with a non-empty servers: block')
-  parser.add_argument('--summary-file', type=Path, help='optional path for a short plain-text summary, for embedding in a notification body')
+  parser.add_argument('--kestra-outputs', action='store_true', help='print the Kestra outputs line (summary, drifted_groups, plans, infra_commit) instead of raw JSON')
   args = parser.parse_args()
 
   servers_yaml = args.root / 'config' / f'servers_{args.env}.yaml'
@@ -141,14 +158,17 @@ def main() -> int:
     print(f'No server groups with a servers: block found in {servers_yaml}', file=sys.stderr)
     return 1
 
+  commit = infra_commit(args.root)
+  print(f'infrastructure at: {commit}', file=sys.stderr)
   results = [run_plan(args.root, args.env, group, args.plan_dir) for group in groups]
-  if args.summary_file:
-    write_summary(args.summary_file, args.env, results)
-  print(json.dumps({
-    'environment': args.env,
-    'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-    'groups': results,
-  }))
+  if args.kestra_outputs:
+    print('::' + json.dumps({'outputs': kestra_outputs(args.env, results, commit)}) + '::')
+  else:
+    print(json.dumps({
+      'environment': args.env,
+      'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+      'groups': results,
+    }))
   return 1 if any(result['status'] == 'error' for result in results) else 0
 
 
