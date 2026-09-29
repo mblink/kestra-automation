@@ -17,10 +17,13 @@ on the worker) and a short plain-text summary (via `--summary-file`). `ssh.Comma
 notification embeds it verbatim with `{{ outputs.drift_check.vars.summary }}`, avoiding any need to
 compute an aggregate inside a Pebble template.
 
-For "some sort of link and information to apply the plans" (the original ask): each drifted
-group's plan file path is included in the summary. Kestra has no file-hosting or hyperlink
-mechanism for an arbitrary path on a remote host, so the plan file's name/path *is* the handoff
-artifact a follow-up "apply this plan" flow would take as an input.
+For each drifted group the summary (and so the email) lists its saved plan file path and one line
+per resource tofu would change: action plus address, e.g. `~ update aws_instance.server["x"]`,
+taken from `tofu show -json`. Attribute values are deliberately left out of the email. The full
+`tofu show` diff for each drifted group goes to the `drift_check` task log, which is what to read
+at the `await_review` Pause. Kestra has no file-hosting or hyperlink mechanism for an arbitrary
+path on a remote host, so the plan file's path *is* the handoff artifact a follow-up "apply this
+plan" flow would take as an input.
 
 `flows/staging/infra/provision-dummy.yml` exercises the separate, still-untested
 `tofu plan -> Pause -> tofu apply` chain (`shared.infra/provision-server.yml`'s own shape)
