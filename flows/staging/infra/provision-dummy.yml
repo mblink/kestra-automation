@@ -36,7 +36,8 @@ tasks:
         cd /src/infrastructure/staging/kestra_dummy
         git pull
         tofu init -input=false
-        tofu plan -input=false -out=/tmp/tfplan-dummy
+        mkdir -p /tmp/tofu-plans/run-{{ execution.id }}
+        tofu plan -input=false -out=/tmp/tofu-plans/run-{{ execution.id }}/plan
 
   - id: review_plan
     type: io.kestra.plugin.core.flow.Pause
@@ -63,8 +64,7 @@ tasks:
         export AWS_CONFIG_FILE=/tmp/kestra_aws_config
         export AWS_PROFILE=east
         cd /src/infrastructure/staging/kestra_dummy
-        tofu apply -input=false /tmp/tfplan-dummy
-        rm -f /tmp/tfplan-dummy
+        tofu apply -input=false /tmp/tofu-plans/run-{{ execution.id }}/plan
 
   - id: notify_success
     type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
@@ -81,6 +81,25 @@ triggers:
     cron: "0 0 * * 0"
     timezone: UTC
     disabled: true
+
+finally:
+  - id: cleanup_plans
+    type: io.kestra.plugin.fs.ssh.Command
+    host: stagingkestra01.staging.vpc
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/tofu_plan_cleanup.sh <<'CLEANUP_SCRIPT'
+        {{ read('tofu_plan_cleanup.sh', namespace='shared') }}
+        CLEANUP_SCRIPT
+        chmod +x /tmp/tofu_plan_cleanup.sh
+        /tmp/tofu_plan_cleanup.sh {{ execution.id }}
+        rm -f /tmp/tofu_plan_cleanup.sh
 
 errors:
   - id: notify_failure

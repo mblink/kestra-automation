@@ -2,7 +2,7 @@ id: dev-subnet-apply
 namespace: staging.infra
 
 description: |
-  Plan -> human review -> apply for staging/dev-subnet only, run on stagingkestra01 against its
+  Plan -> human review -> apply for staging/dev-subnet only, run on the staging Kestra worker against its
   /src/infrastructure checkout (whatever branch is checked out there, after a git pull). Use it to
   exercise real changes to the dev-subnet group -- a new server, a new volume -- and read back the
   results; the tf directory is fixed, not an input.
@@ -10,7 +10,8 @@ description: |
   tofu_plan reuses namespace-files/shared/tofu_drift_check.py (--group dev-subnet), so the email
   and task log have the same shape as drift-check's: changed resource addresses/actions in the
   email, full `tofu show` diff in the tofu_plan task log. The plan file is per-execution under
-  /tmp/tofu-plans/staging/apply-<execution id>/, never one of drift-check's.
+  /tmp/tofu-plans/run-<execution id>/, never one of drift-check's, and cleanup_plans (finally:)
+  removes it whether the run succeeds, fails or is killed.
 
   When the plan has changes, the execution pauses at review_plan; nothing applies until it is
   resumed from the Kestra UI. tofu_apply applies that exact saved plan, so tofu rejects it as stale
@@ -61,25 +62,18 @@ tasks:
         export AWS_PROFILE=east
         cd /src/infrastructure
         git pull
-        infra_commit=$(git log -1 --format='%h %s')
-        echo "infrastructure at: $infra_commit"
         cat > /tmp/tofu_drift_check.py <<'DRIFT_SCRIPT'
         {{ read('tofu_drift_check.py', namespace='shared') }}
         DRIFT_SCRIPT
         chmod +x /tmp/tofu_drift_check.py
         /opt/saltstack/salt/bin/python3 /tmp/tofu_drift_check.py \
           --env staging --root /src/infrastructure --group dev-subnet \
-          --plan-dir /tmp/tofu-plans/staging/apply-{{ execution.id }} \
-          --summary-file /tmp/dev-subnet-summary-{{ execution.id }}.txt \
-          > /tmp/dev-subnet-plan-{{ execution.id }}.json
-        /opt/saltstack/salt/bin/python3 -c 'import json, sys; r = json.load(open(sys.argv[1]))["groups"][0]; print("::" + json.dumps(dict(outputs=dict(plan_status=r["status"], plan_file=r["plan_file"] or "", summary=open(sys.argv[2]).read(), infra_commit=sys.argv[3]))) + "::")' \
-          /tmp/dev-subnet-plan-{{ execution.id }}.json /tmp/dev-subnet-summary-{{ execution.id }}.txt "$infra_commit"
-        grep -Eq '"status": ?"drift"' /tmp/dev-subnet-plan-{{ execution.id }}.json || rm -rf /tmp/tofu-plans/staging/apply-{{ execution.id }}
-        rm -f /tmp/tofu_drift_check.py /tmp/dev-subnet-plan-{{ execution.id }}.json /tmp/dev-subnet-summary-{{ execution.id }}.txt
+          --plan-dir /tmp/tofu-plans/run-{{ execution.id }} --kestra-outputs
+        rm -f /tmp/tofu_drift_check.py
 
   - id: apply_if_changed
     type: io.kestra.plugin.core.flow.If
-    condition: "{{ outputs.tofu_plan.vars.plan_status == 'drift' }}"
+    condition: "{{ outputs.tofu_plan.vars.drifted_groups | length > 0 }}"
     then:
       - id: notify_plan
         type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
@@ -99,7 +93,7 @@ tasks:
 
       - id: tofu_apply
         type: io.kestra.plugin.fs.ssh.Command
-        host: stagingkestra01.staging.vpc
+        host: "{{ read(outputs.get_target_host.outputFiles['host.txt']) }}"
         port: "2007"
         username: bldeploy
         authMethod: PUBLIC_KEY
@@ -115,12 +109,12 @@ tasks:
             export AWS_CONFIG_FILE=/tmp/kestra_aws_config
             export AWS_PROFILE=east
             cd /src/infrastructure/staging/dev-subnet
-            tofu apply -input=false -no-color "{{ outputs.tofu_plan.vars.plan_file }}"
+            tofu apply -input=false -no-color "{{ outputs.tofu_plan.vars.plans['dev-subnet'] }}"
             # Human-readable form masks sensitive outputs; -json would print them in the clear.
             tofu output -no-color > /tmp/dev-subnet-outputs-{{ execution.id }}.txt
             cat /tmp/dev-subnet-outputs-{{ execution.id }}.txt
             /opt/saltstack/salt/bin/python3 -c 'import json, sys; print("::" + json.dumps(dict(outputs=dict(tofu_outputs=open(sys.argv[1]).read()))) + "::")' /tmp/dev-subnet-outputs-{{ execution.id }}.txt
-            rm -rf /tmp/dev-subnet-outputs-{{ execution.id }}.txt /tmp/tofu-plans/staging/apply-{{ execution.id }}
+            rm -f /tmp/dev-subnet-outputs-{{ execution.id }}.txt
 
       - id: notify_applied
         type: io.kestra.plugin.notifications.sendgrid.SendGridMailSend
@@ -152,6 +146,25 @@ triggers:
     cron: "0 0 * * 0"
     timezone: UTC
     disabled: true
+
+finally:
+  - id: cleanup_plans
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ read(outputs.get_target_host.outputFiles['host.txt']) }}"
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/tofu_plan_cleanup.sh <<'CLEANUP_SCRIPT'
+        {{ read('tofu_plan_cleanup.sh', namespace='shared') }}
+        CLEANUP_SCRIPT
+        chmod +x /tmp/tofu_plan_cleanup.sh
+        /tmp/tofu_plan_cleanup.sh {{ execution.id }}
+        rm -f /tmp/tofu_plan_cleanup.sh
 
 errors:
   - id: notify_failure

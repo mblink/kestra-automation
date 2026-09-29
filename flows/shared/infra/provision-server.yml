@@ -123,7 +123,8 @@ tasks:
         cd /src/infrastructure/{{ inputs.tf_dir }}
         git pull
         tofu init -input=false
-        tofu plan -input=false {% if inputs.resource_address %}-replace="{{ inputs.resource_address }}"{% endif %} -out=/tmp/tfplan-{{ inputs.server_name }}
+        mkdir -p /tmp/tofu-plans/run-{{ execution.id }}
+        tofu plan -input=false {% if inputs.resource_address %}-replace="{{ inputs.resource_address }}"{% endif %} -out=/tmp/tofu-plans/run-{{ execution.id }}/plan
 
   - id: review_plan
     type: io.kestra.plugin.core.flow.Pause
@@ -149,8 +150,7 @@ tasks:
         export TF_VAR_aws_creation_key="{{ secret('TF_AWS_CREATION_KEY') }}"
         export TF_VAR_user_ssh_key="{{ secret('TF_USER_SSH_KEY') }}"
         cd /src/infrastructure/{{ inputs.tf_dir }}
-        tofu apply -input=false /tmp/tfplan-{{ inputs.server_name }}
-        rm -f /tmp/tfplan-{{ inputs.server_name }}
+        tofu apply -input=false /tmp/tofu-plans/run-{{ execution.id }}/plan
 
   - id: wait_for_ssh
     type: io.kestra.plugin.fs.ssh.Command
@@ -192,6 +192,25 @@ triggers:
     cron: "0 0 * * 0"
     timezone: UTC
     disabled: true
+
+finally:
+  - id: cleanup_plans
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.runner_host }}"
+    port: "2007"
+    username: bldeploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+    strictHostKeyChecking: "no"
+    commands:
+      - |
+        set -e
+        cat > /tmp/tofu_plan_cleanup.sh <<'CLEANUP_SCRIPT'
+        {{ read('tofu_plan_cleanup.sh', namespace='shared') }}
+        CLEANUP_SCRIPT
+        chmod +x /tmp/tofu_plan_cleanup.sh
+        /tmp/tofu_plan_cleanup.sh {{ execution.id }}
+        rm -f /tmp/tofu_plan_cleanup.sh
 
 errors:
   - id: notify_failure

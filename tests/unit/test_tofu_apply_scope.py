@@ -1,19 +1,25 @@
 """Only the flows listed here may run `tofu apply`.
 
-Plan-only flows (drift-check) share scripts and boilerplate with the apply flows, so an apply
-could arrive by copy/paste. Adding a flow to this list is the deliberate step.
+Every tofu flow shares scripts and boilerplate, so an apply could arrive in a new one by
+copy/paste. Adding a flow to this list is the deliberate step.
 """
 import re
 import subprocess
+
+import pytest
 
 from tests.unit.conftest import REPO_ROOT, discover_flow_paths, iter_strings, load_flow
 
 APPLY_FLOWS = {
     "flows/shared/infra/provision-server.yml",
     "flows/staging/infra/dev-subnet-apply.yml",
+    "flows/staging/infra/drift-check.yml",
     "flows/staging/infra/provision-dummy.yml",
 }
 SHELL_APPLY = re.compile(r"\btofu\s+apply\b")
+RUN_DIR = "/tmp/tofu-plans/run-{{ execution.id }}"
+# A path token may embed a Pebble expression, which contains spaces.
+PLAN_TARGET = re.compile(r"(?:-out=|--plan-dir\s+)((?:\{\{.*?\}\}|[^\s{])+)")
 PYTHON_APPLY = re.compile(r"""['"]tofu['"]\s*,\s*['"]apply['"]""")
 
 
@@ -40,3 +46,22 @@ def test_namespace_file_scripts_never_apply():
     for rel in tracked:
         text = (REPO_ROOT / rel).read_text()
         assert not SHELL_APPLY.search(text) and not PYTHON_APPLY.search(text), f"{rel} runs tofu apply"
+
+
+@pytest.mark.parametrize("rel", sorted(APPLY_FLOWS))
+def test_apply_flows_keep_plans_in_the_run_dir(rel):
+    # The finally: cleanup removes only RUN_DIR; a plan written anywhere else outlives the run.
+    flow = load_flow(REPO_ROOT / rel)
+    targets = [t for s in iter_strings(flow["tasks"]) for t in PLAN_TARGET.findall(s)]
+    assert targets, f"{rel}: no -out=/--plan-dir found"
+    for target in targets:
+        assert target.startswith(RUN_DIR), f"{rel}: plan written to {target}, outside {RUN_DIR}"
+
+
+@pytest.mark.parametrize("rel", sorted(APPLY_FLOWS))
+def test_apply_flows_clean_up_plans_in_finally(rel):
+    flow = load_flow(REPO_ROOT / rel)
+    commands = [s for s in iter_strings(flow.get("finally") or [])]
+    assert any("tofu_plan_cleanup.sh {{ execution.id }}" in c for c in commands), (
+        f"{rel}: finally: must run tofu_plan_cleanup.sh {{{{ execution.id }}}}"
+    )
