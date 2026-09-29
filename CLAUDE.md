@@ -74,10 +74,11 @@ commands:
     rm -f /tmp/x.sh
 ```
 
-Host discovery:
+Host discovery — every lookup returns the AWS `PrivateDnsName`, which the Kestra server can resolve for both environments; the `*.staging.vpc` / `*.bondlink.vpc` zones each resolve only in their own:
 
 - **Fleet** — `AwsCLI` writes `instances.json`; `ForEach` `values: "{{ fromJson(read(outputs.<task>.outputFiles['instances.json'])) }}"`, per-host `{{ fromJson(taskrun.value).PrivateDnsName }}` (see `bondlink-logs.yml`).
 - **Exactly one host** — `namespace-files/shared/aws_query.sh privateDnsByTagName <Name tag>` writes `host.txt` (fails on 0 or >1 matches); `host: "{{ read(outputs.<task>.outputFiles['host.txt']) }}"`, no ForEach (see `staging/haproxy/certificate-renewal.yml`).
+- **The environment's Kestra worker** — `aws_query.sh environmentKestraWorker <env>` (tags `NodeType=kestra-worker`, `Environment=<env>`); the first task of every tofu flow. `tofu-flows` skill.
 
 ## Pitfalls the test suite enforces
 
